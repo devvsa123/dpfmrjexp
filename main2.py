@@ -18,19 +18,14 @@ if singra_file and pwa_file and lotes_file:
     # Ler CSV do SINGRA
     df_singra = pd.read_csv(singra_file, sep=';', encoding='latin1')
     df_singra.columns = df_singra.columns.str.replace("'", "").str.strip()
-    # Limpeza de aspas e espaços
-    df_singra['ID'] = df_singra['ID'].astype(str).str.replace("'", "").str.replace('"', '').str.strip()
-    df_singra['OMS'] = df_singra['OMS'].astype(str).str.strip()
-    df_singra['LISTA_WMS_ID'] = df_singra['LISTA_WMS_ID'].astype(str).str.replace("'", "").str.replace('"', '').str.strip()
 
-    # Ler planilha PWA
+    # Ler arquivos xlsx
     df_pwa = pd.read_excel(pwa_file, sheet_name=0)
-    df_pwa['PEDIDO'] = df_pwa['PEDIDO'].astype(str).str.replace("'", "").str.replace('"', '').str.strip()
-    df_pwa['LOTE'] = df_pwa['LOTE'].astype(str).str.replace("'", "").str.replace('"', '').str.strip()
-
-    # Ler planilha de lotes do usuário
     df_lotes_user = pd.read_excel(lotes_file, sheet_name=0)
+
+    # Normalizar LOTE
     df_lotes_user['LOTE'] = df_lotes_user['LOTE'].astype(str).str.strip()
+    df_pwa['LOTE'] = df_pwa['LOTE'].astype(str).str.strip()
 
     atendidas = []
     pendentes = []
@@ -38,39 +33,40 @@ if singra_file and pwa_file and lotes_file:
     rms_unicas = df_singra['ID'].unique()
 
     for rm in rms_unicas:
-        lotes_rm = df_pwa[df_pwa['PEDIDO'] == rm]['LOTE'].unique().tolist()
-        lotes_usuario = df_lotes_user['LOTE'].unique().tolist()
+        lotes_rm = df_pwa[df_pwa['PEDIDO'] == rm]['LOTE'].astype(str).str.strip().unique().tolist()
+        lotes_usuario = df_lotes_user['LOTE'].astype(str).str.strip().unique().tolist()
         lotes_presentes = [l for l in lotes_rm if l in lotes_usuario]
 
         cam = df_singra.loc[df_singra['ID'] == rm, 'OMS'].values[0]
-        capa = df_singra.loc[df_singra['ID'] == rm, 'LISTA_WMS_ID'].values[0]
 
         if set(lotes_presentes) == set(lotes_rm):
-            atendidas.append({"RM": rm, "OMS/CAM": cam, "CAPA": capa})
+            atendidas.append({"RM": rm, "OMS/CAM": cam})
         else:
             faltam = list(set(lotes_rm) - set(lotes_presentes))
-            pendentes.append({"RM": rm, "OMS/CAM": cam, "CAPA": capa, "LOTES_FALTANDO": ', '.join(faltam)})
+            pendentes.append({"RM": rm, "OMS/CAM": cam, "LOTES_FALTANDO": ', '.join(faltam)})
 
-    # Resumo rápido
+    # === INDICADORES RÁPIDOS ===
+    total_att = len(atendidas)
+    total_pend = len(pendentes)
     st.markdown("### 📊 Resumo")
     col1, col2 = st.columns(2)
-    col1.success(f"✅ Total de RMs totalmente atendidas: {len(atendidas)}")
-    col2.warning(f"⚠️ Total de RMs parcialmente atendidas: {len(pendentes)}")
+    col1.success(f"✅ Total de RMs totalmente atendidas: {total_att}")
+    col2.warning(f"⚠️ Total de RMs parcialmente atendidas: {total_pend}")
 
-    # === RMs totalmente atendidas agrupadas por CAM e CAPA ===
-    st.subheader("✅ RMs totalmente atendidas (agrupadas por CAM e CAPA)")
+    # === ATENDIDAS AGRUPADAS POR CAM ===
+    st.subheader("✅ RMs totalmente atendidas por CAM")
     df_att = pd.DataFrame(atendidas)
     if not df_att.empty:
-        agrupado_att = df_att.groupby(['OMS/CAM', 'CAPA'])['RM'].apply(lambda x: ', '.join(x.astype(str))).reset_index()
+        agrupado_att = df_att.groupby('OMS/CAM')['RM'].apply(lambda x: ', '.join(x.astype(str))).reset_index()
         st.dataframe(agrupado_att.style.set_properties(**{'text-align': 'left'}))
     else:
         st.info("Nenhuma RM totalmente atendida encontrada.")
 
-    # === RMs parcialmente atendidas agrupadas por CAM e CAPA ===
-    st.subheader("⚠️ RMs parcialmente atendidas (agrupadas por CAM e CAPA)")
+    # === PENDENTES AGRUPADAS POR CAM ===
+    st.subheader("⚠️ RMs parcialmente atendidas por CAM")
     df_pend = pd.DataFrame(pendentes)
     if not df_pend.empty:
-        agrupado_pend = df_pend.groupby(['OMS/CAM', 'CAPA']).apply(
+        agrupado_pend = df_pend.groupby('OMS/CAM').apply(
             lambda x: pd.Series({
                 'RMs': ', '.join(x['RM'].astype(str)),
                 'LOTES_FALTANDO': '; '.join(x['LOTES_FALTANDO'])
@@ -80,12 +76,12 @@ if singra_file and pwa_file and lotes_file:
     else:
         st.info("Nenhuma RM parcialmente atendida encontrada.")
 
-    # Exportação para Excel
+    # Exportação em Excel
     def to_excel(df1, df2):
         output = BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            df1.to_excel(writer, sheet_name='Atendidas_CAM_CAPA', index=False)
-            df2.to_excel(writer, sheet_name='Pendentes_CAM_CAPA', index=False)
+            df1.to_excel(writer, sheet_name='Atendidas_por_CAM', index=False)
+            df2.to_excel(writer, sheet_name='Pendentes_por_CAM', index=False)
         return output.getvalue()
 
     with st.expander("📥 Exportar resultados"):
