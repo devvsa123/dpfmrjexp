@@ -100,8 +100,8 @@ if singra_file and pwa_file and lotes_file:
     # 🔹 BLOCO 2: RMs com MAPA sem STC
     # ===============================
     st.markdown("### 📋 RMs com MAPA porém sem STC")
-    if 'MAPA' in df_pwa.columns and 'STC' in df_pwa.columns and 'CAM' in df_pwa.columns and 'CAPA' in df_pwa.columns:
-        df_mapa_sem_stc = df_pwa[(df_pwa['MAPA'] != '') & (df_pwa['STC'] == '')]
+    if 'MAPA' in df_pwa.columns and 'STC' in df_pwa.columns and 'STATUS' in df_pwa.columns and 'CAM' in df_pwa.columns and 'CAPA' in df_pwa.columns:
+        df_mapa_sem_stc = df_pwa[(df_pwa['MAPA'] != '') & (df_pwa['STC'] == '') & (df_pwa['STATUS'] != 'EXPEDIDO')]
         if not df_mapa_sem_stc.empty:
             agrupado_mapa = df_mapa_sem_stc.groupby(['CAM', 'CAPA']).agg({
                 'PEDIDO': lambda x: ', '.join(sorted(set(x))),
