@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 st.set_page_config(page_title="Controle de RM atendidas", layout="wide")
 st.title("📦 Controle de RMs - Estocagem e Expedição")
@@ -41,10 +42,13 @@ if singra_file and pwa_file:
         df_pwa['MAPA'] = df_pwa['MAPA'].apply(lambda x: str(int(float(x))) if x not in ['', None] else '')
 
     # ===============================
-    # 🔹 Ler LOTE do Google Sheets
+    # 🔹 Ler LOTE do Google Sheets via secrets.toml
     # ===============================
+    service_account_info = st.secrets["google_service_account"]
+    service_account_dict = json.loads(service_account_info)
+
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    credentials = ServiceAccountCredentials.from_json_keyfile_name("depfard-37035f9fdfad.json", scope)
+    credentials = ServiceAccountCredentials.from_json_keyfile_dict(service_account_dict, scope)
     client = gspread.authorize(credentials)
 
     spreadsheet = client.open_by_url(
