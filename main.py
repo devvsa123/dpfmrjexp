@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 st.set_page_config(page_title="Controle de RM atendidas", layout="wide")
-
 st.title("📦 Controle de RMs - Estocagem e Expedição")
 st.markdown("O sistema organiza as RMs em três blocos: conferência por lote, MAPA sem STC e STC não expedido.")
 
@@ -13,23 +14,24 @@ st.markdown("O sistema organiza as RMs em três blocos: conferência por lote, M
 with st.expander("📄 Upload de arquivos"):
     singra_file = st.file_uploader("Upload planilha do SINGRA (.csv)", type=["csv"])
     pwa_file = st.file_uploader("Upload planilha do PWA (.xlsx)", type=["xlsx"])
-    lotes_file = st.file_uploader("Upload planilha com LOTES do usuário (.xlsx)", type=["xlsx"])
 
-if singra_file and pwa_file and lotes_file:
+if singra_file and pwa_file:
 
-    # === Ler CSV do SINGRA ===
+    # ===============================
+    # 🔹 Ler CSV do SINGRA
+    # ===============================
     df_singra = pd.read_csv(singra_file, sep=';', encoding='latin1')
     df_singra.columns = df_singra.columns.str.replace("'", "").str.strip()
     df_singra = df_singra.fillna('')
-    
     for col in ['ID', 'OMS', 'LISTA_WMS_ID']:
         if col in df_singra.columns:
             df_singra[col] = df_singra[col].astype(str).str.replace("'", "").str.replace('"', '').str.strip()
 
-    # === Ler planilha PWA ===
+    # ===============================
+    # 🔹 Ler planilha PWA
+    # ===============================
     df_pwa = pd.read_excel(pwa_file, sheet_name=0)
     df_pwa = df_pwa.fillna('')
-    
     for col in ['PEDIDO', 'LOTE', 'CAPA', 'MAPA', 'STC', 'STATUS', 'CAM']:
         if col in df_pwa.columns:
             df_pwa[col] = df_pwa[col].astype(str).str.replace("'", "").str.replace('"', '').str.strip()
@@ -38,8 +40,19 @@ if singra_file and pwa_file and lotes_file:
     if 'MAPA' in df_pwa.columns:
         df_pwa['MAPA'] = df_pwa['MAPA'].apply(lambda x: str(int(float(x))) if x not in ['', None] else '')
 
-    # === Ler planilha de lotes do usuário ===
-    df_lotes_user = pd.read_excel(lotes_file, sheet_name=0)
+    # ===============================
+    # 🔹 Ler LOTE do Google Sheets
+    # ===============================
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    credentials = ServiceAccountCredentials.from_json_keyfile_name("depfard-37035f9fdfad.json", scope)
+    client = gspread.authorize(credentials)
+
+    spreadsheet = client.open_by_url(
+        "https://docs.google.com/spreadsheets/d/1naVnAlUGmeAMb_YftLGYit-1e1BcYFJgiJwSnOcgJf4/edit?gid=0"
+    )
+    worksheet = spreadsheet.get_worksheet(0)
+    data = worksheet.get_all_records()
+    df_lotes_user = pd.DataFrame(data)
     df_lotes_user['LOTE'] = df_lotes_user['LOTE'].astype(str).str.strip()
 
     # ===============================
@@ -49,7 +62,6 @@ if singra_file and pwa_file and lotes_file:
     pendentes = []
 
     rms_unicas = df_singra['ID'].unique()
-
     for rm in rms_unicas:
         # Ignorar RMs que já possuem MAPA
         if 'MAPA' in df_pwa.columns and not df_pwa[df_pwa['PEDIDO'] == rm]['MAPA'].eq('').all():
@@ -100,7 +112,7 @@ if singra_file and pwa_file and lotes_file:
     # 🔹 BLOCO 2: RMs com MAPA sem STC
     # ===============================
     st.markdown("### 📋 RMs com MAPA porém sem STC")
-    if 'MAPA' in df_pwa.columns and 'STC' in df_pwa.columns and 'STATUS' in df_pwa.columns and 'CAM' in df_pwa.columns and 'CAPA' in df_pwa.columns:
+    if all(col in df_pwa.columns for col in ['MAPA','STC','STATUS','CAM','CAPA']):
         df_mapa_sem_stc = df_pwa[(df_pwa['MAPA'] != '') & (df_pwa['STC'] == '') & (df_pwa['STATUS'] != 'EXPEDIDO')]
         if not df_mapa_sem_stc.empty:
             agrupado_mapa = df_mapa_sem_stc.groupby(['CAM', 'CAPA']).agg({
@@ -115,7 +127,7 @@ if singra_file and pwa_file and lotes_file:
     # 🔹 BLOCO 3: RMs com STC mas não expedidas
     # ===============================
     st.markdown("### 🚚 RMs com STC porém não expedidas")
-    if 'STC' in df_pwa.columns and 'STATUS' in df_pwa.columns and 'CAM' in df_pwa.columns and 'CAPA' in df_pwa.columns:
+    if all(col in df_pwa.columns for col in ['STC','STATUS','CAM','CAPA']):
         df_stc_nao_expedida = df_pwa[(df_pwa['STC'] != '') & (df_pwa['STATUS'] != 'EXPEDIDO') & (df_pwa['STATUS'] != 'CANCELADO')]
         if not df_stc_nao_expedida.empty:
             agrupado_stc = df_stc_nao_expedida.groupby(['CAM', 'CAPA']).agg({
