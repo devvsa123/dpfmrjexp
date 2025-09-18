@@ -44,11 +44,16 @@ if singra_file and pwa_file:
     # ===============================
     # 🔹 Ler LOTE do Google Sheets via secrets.toml
     # ===============================
-    service_account_info = st.secrets["gcp_service_account"]
-    service_account_dict = st.secrets["gcp_service_account"]
+    # 🔑 Lendo credenciais do secrets
+    service_account_dict = dict(st.secrets["gcp_service_account"])
 
+    # 🔹 Escopos de acesso ao Google Sheets e Drive
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+
+    # 🔹 Criando credenciais a partir do dicionário
     credentials = ServiceAccountCredentials.from_json_keyfile_dict(service_account_dict, scope)
+
+    # 🔹 Autenticando no Google Sheets
     client = gspread.authorize(credentials)
 
     spreadsheet = client.open_by_url(
