@@ -65,7 +65,7 @@ if singra_file and pwa_file:
     df_lotes_user['LOTE'] = df_lotes_user['LOTE'].astype(str).str.strip()
 
     # ===============================
-    # 🔹 BLOCO 1: CAPA completamente atendidas
+    # 🔹 BLOCO 1: CAPA completamente atendidas (considerando RM sem MAPA)
     # ===============================
     capa_completa = []
     capa_incompleta = []
@@ -79,28 +79,35 @@ if singra_file and pwa_file:
     for capa in capas_unicas:
         # Pegar todas as RM desta CAPA
         rms_da_capa = df_singra[df_singra['LISTA_WMS_ID'] == capa]['ID'].unique()
-        todos_lotes_capa = []
+        
+        # Filtrar apenas as RM que ainda não possuem MAPA
+        rms_sem_mapa = [rm for rm in rms_da_capa if df_pwa[(df_pwa['PEDIDO'] == rm)]['MAPA'].eq('').any()]
 
-        for rm in rms_da_capa:
+        # Se todas RM têm MAPA, ignorar essa CAPA
+        if not rms_sem_mapa:
+            continue
+
+        todos_lotes_capa = []
+        for rm in rms_sem_mapa:
             lotes_rm = df_pwa[df_pwa['PEDIDO'] == rm]['LOTE'].unique().tolist()
             todos_lotes_capa.extend(lotes_rm)
 
-        # Verificar se todos os lotes da CAPA estão presentes
+        # Verificar se todos os lotes da CAPA estão presentes na conferência
         faltando_lotes = [l for l in todos_lotes_capa if l not in lotes_disponiveis]
 
         # Pegar CAM (considerando que todas RM da CAPA tenham o mesmo CAM)
         cam = df_singra.loc[df_singra['LISTA_WMS_ID'] == capa, 'OMS'].values[0] if 'OMS' in df_singra.columns else ''
 
         if not faltando_lotes:
-            capa_completa.append({"CAM": cam, "CAPA": capa, "RMs": ', '.join(rms_da_capa)})
+            capa_completa.append({"CAM": cam, "CAPA": capa, "RMs": ', '.join(rms_sem_mapa)})
         else:
-            capa_incompleta.append({"CAM": cam, "CAPA": capa, "RMs": ', '.join(rms_da_capa), "LOTES_FALTANDO": ', '.join(faltando_lotes)})
+            capa_incompleta.append({"CAM": cam, "CAPA": capa, "RMs": ', '.join(rms_sem_mapa), "LOTES_FALTANDO": ', '.join(faltando_lotes)})
 
     # Resumo
     st.markdown("### 📊 Resumo Conferência por CAPA")
     col1, col2 = st.columns(2)
-    col1.success(f"✅ Total de CAPA completamente atendidas: {len(capa_completa)}")
-    col2.warning(f"⚠️ Total de CAPA parcialmente atendidas: {len(capa_incompleta)}")
+    col1.success(f"✅ Total de CAPA completamente atendidas (sem MAPA): {len(capa_completa)}")
+    col2.warning(f"⚠️ Total de CAPA parcialmente atendidas (pendências): {len(capa_incompleta)}")
 
     # Mostrar blocos
     st.subheader("✅ CAPA completamente atendidas (agrupadas por CAM e CAPA)")
@@ -116,6 +123,7 @@ if singra_file and pwa_file:
         st.dataframe(df_capa_incompleta.style.set_properties(**{'text-align': 'left'}))
     else:
         st.info("Nenhuma CAPA parcialmente atendida encontrada.")
+
 
     # ===============================
     # 🔹 BLOCO 2: RMs com MAPA sem STC
