@@ -44,7 +44,7 @@ if singra_file and pwa_file:
     # ===============================
     # 🔹 Ler LOTE do Google Sheets via secrets.toml
     # ===============================
-    service_account_info = st.secrets["google_service_account"]
+    service_account_info = st.secrets["gcp_service_account"]
     service_account_dict = st.secrets["gcp_service_account"]
 
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
