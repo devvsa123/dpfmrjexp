@@ -64,6 +64,9 @@ if singra_file and pwa_file:
     df_lotes_user = pd.DataFrame(data)
     df_lotes_user['LOTE'] = df_lotes_user['LOTE'].astype(str).str.strip()
 
+    # 🔹 Pré-processar df_pwa logo após o upload
+    df_pwa['PEDIDO_LIMPO'] = df_pwa['PEDIDO'].astype(str).str.replace(".", "", regex=False)
+
     # ===============================
     # 🔹 Nova aba: Consulta rápida de RMs via texto
     # ===============================
@@ -80,27 +83,26 @@ if singra_file and pwa_file:
                 rms_extraidas = re.findall(r"\b\d{2}\.\d{3}\.\d{3}\b", texto_rms)
 
                 if rms_extraidas:
+                    # Normalizar para comparar
+                    rms_sem_ponto = [rm.replace(".", "") for rm in rms_extraidas]
+
+                    # Filtrar de uma vez só em vez de loop
+                    df_filtro = df_pwa[df_pwa['PEDIDO_LIMPO'].isin(rms_sem_ponto)]
+
                     resultados = []
+                    for rm, rm_limpo in zip(rms_extraidas, rms_sem_ponto):
+                        dados_rm = df_filtro[df_filtro['PEDIDO_LIMPO'] == rm_limpo]
 
-                    for rm in rms_extraidas:
-                        # Remove os pontos para comparar com a planilha
-                        rm_sem_ponto = rm.replace(".", "")
-
-                        # Garante que também o df_pwa esteja sem pontos
-                        df_pwa['PEDIDO_LIMPO'] = df_pwa['PEDIDO'].astype(str).str.replace(".", "", regex=False)
-
-                        df_filtro = df_pwa[df_pwa['PEDIDO_LIMPO'] == rm_sem_ponto]
-
-                        if not df_filtro.empty:
-                            mapa = ', '.join(df_filtro['MAPA'].unique()) if any(df_filtro['MAPA'] != '') else "Não consta"
-                            stc = ', '.join(df_filtro['STC'].unique()) if any(df_filtro['STC'] != '') else "Não consta"
+                        if not dados_rm.empty:
+                            mapa = ', '.join(dados_rm['MAPA'].unique()) if any(dados_rm['MAPA'] != '') else "Não consta"
+                            stc = ', '.join(dados_rm['STC'].unique()) if any(dados_rm['STC'] != '') else "Não consta"
                         else:
                             mapa = "Não consta"
                             stc = "Não consta"
 
                         resultados.append({
                             "RM (texto)": rm,
-                            "RM (planilha)": rm_sem_ponto,
+                            "RM (planilha)": rm_limpo,
                             "MAPA": mapa,
                             "STC": stc
                         })
@@ -111,6 +113,7 @@ if singra_file and pwa_file:
                     st.warning("⚠️ Nenhuma RM válida encontrada no texto.")
             else:
                 st.info("Cole o texto acima e clique em **Consultar**.")
+
 
 
     # ===============================
