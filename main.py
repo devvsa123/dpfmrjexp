@@ -221,18 +221,42 @@ if singra_file and pwa_file:
     # 🔹 BLOCO 3: RMs com STC mas não expedidas
     # ===============================
     st.markdown("### 🚚 RMs com STC porém não expedidas")
-    if all(col in df_pwa.columns for col in ['STC','STATUS','CAM','CAPA']):
-        df_stc_nao_expedida = df_pwa[(df_pwa['STC'] != '') & (df_pwa['STATUS'] != 'EXPEDIDO') & (df_pwa['STATUS'] != 'CANCELADO')]
+
+    if all(col in df_pwa.columns for col in ['STC', 'STATUS', 'CAM', 'CAPA']):
+        df_stc_nao_expedida = df_pwa[
+            (df_pwa['STC'] != '') &
+            (df_pwa['STATUS'] != 'EXPEDIDO') &
+            (df_pwa['STATUS'] != 'CANCELADO')
+        ]
+
         if not df_stc_nao_expedida.empty:
-            agrupado_stc = df_stc_nao_expedida.groupby(['CAM', 'CAPA']).agg({
-                'PEDIDO': lambda x: ', '.join(sorted(set(x))),
-                'MAPA': lambda x: ', '.join(sorted(set(x))),
-                'STC': lambda x: ', '.join(sorted(set(x))),
-                'STATUS': lambda x: ', '.join(sorted(set(x)))
-            }).reset_index()
-            st.dataframe(agrupado_stc.style.set_properties(**{'text-align': 'left'}))
+            # Agrupar por CAM e STC → trazer todos os MAPAs
+            agrupado_stc = (
+                df_stc_nao_expedida.groupby(['CAM', 'STC'])
+                .agg({
+                    'MAPA': lambda x: ', '.join(sorted(set(x)))
+                })
+                .reset_index()
+            )
+
+            # 🔹 Filtro por CAM
+            cams_disponiveis = ["Todos"] + sorted(agrupado_stc['CAM'].unique().tolist())
+            cam_escolhido = st.selectbox("Filtrar por CAM (Bloco 3)", cams_disponiveis)
+
+            if cam_escolhido != "Todos":
+                agrupado_filtrado = agrupado_stc[agrupado_stc['CAM'] == cam_escolhido]
+            else:
+                agrupado_filtrado = agrupado_stc
+
+            # 🔹 Mostrar dataframe
+            st.dataframe(
+                agrupado_filtrado.style.set_properties(**{'text-align': 'left'}),
+                use_container_width=True
+            )
+
         else:
             st.info("Nenhuma RM encontrada com STC sem expedição.")
+
 
     # ===============================
     # 🔹 Exportação Excel
