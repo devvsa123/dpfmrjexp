@@ -160,7 +160,7 @@ if singra_file and pwa_file:
     # ===============================
     # 🔹 BLOCO 2: RMs com MAPA sem STC
     # ===============================
-    st.markdown("### 📋 RMs com MAPA porém sem STC")
+    st.markdown("### 📋 Mapas de Carregamento sem STC lançada no WMS")
     if all(col in df_pwa.columns for col in ['MAPA', 'STC', 'STATUS', 'CAM', 'CAPA']):
         agrupado_mapa = agrupar_mapa_sem_stc(df_pwa)
         cams_disponiveis = ["Todos"] + sorted(agrupado_mapa['CAM'].unique().tolist())
@@ -174,7 +174,7 @@ if singra_file and pwa_file:
     # ===============================
     # 🔹 BLOCO 3: RMs com STC mas não expedidas
     # ===============================
-    st.markdown("### 🚚 RMs com STC porém não expedidas")
+    st.markdown("### 🚚 STC não expedidas")
     if all(col in df_pwa.columns for col in ['STC', 'STATUS', 'CAM', 'CAPA']):
         agrupado_stc = agrupar_stc_nao_expedida(df_pwa)
         cams_disponiveis = ["Todos"] + sorted(agrupado_stc['CAM'].unique().tolist())
