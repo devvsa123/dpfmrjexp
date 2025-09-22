@@ -181,13 +181,24 @@ if singra_file and pwa_file:
     # 🔹 BLOCO 2: RMs com MAPA sem STC
     # ===============================
     st.markdown("### 📋 RMs com MAPA porém sem STC")
-    if all(col in df_pwa.columns for col in ['MAPA','STC','STATUS','CAM','CAPA']):
-        df_mapa_sem_stc = df_pwa[(df_pwa['MAPA'] != '') & (df_pwa['STC'] == '') & (df_pwa['STATUS'] != 'EXPEDIDO')]
+    if all(col in df_pwa.columns for col in ['MAPA', 'STC', 'STATUS', 'CAM', 'CAPA']):
+        df_mapa_sem_stc = df_pwa[
+            (df_pwa['MAPA'] != '') & 
+            (df_pwa['STC'] == '') & 
+            (df_pwa['STATUS'] != 'EXPEDIDO')
+        ]
+
         if not df_mapa_sem_stc.empty:
-            agrupado_mapa = df_mapa_sem_stc.groupby(['CAM', 'CAPA']).agg({
-                'PEDIDO': lambda x: ', '.join(sorted(set(x))),
-                'MAPA': lambda x: ', '.join(sorted(set(x)))
-            }).reset_index()
+            # Agrupar por CAM e MAPA → trazer as CAPAs relacionadas
+            agrupado_mapa = (
+                df_mapa_sem_stc.groupby(['CAM', 'MAPA'])
+                .agg({
+                    'CAPA': lambda x: ', '.join(sorted(set(x)))  # apenas CAPAs
+                })
+                .reset_index()
+            )
+
+            # Exibir em dataframe
             st.dataframe(agrupado_mapa.style.set_properties(**{'text-align': 'left'}))
         else:
             st.info("Nenhuma RM encontrada com MAPA sem STC.")
