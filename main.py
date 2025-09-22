@@ -214,22 +214,6 @@ if singra_file and pwa_file:
                 use_container_width=True
             )
 
-            # 🔹 Mostrar também em formato de cards para leitura rápida
-            st.markdown("#### 📑 Visualização em Cards")
-            for _, row in agrupado_filtrado.iterrows():
-                st.markdown(f"""
-                    <div style="
-                        border:1px solid #ccc;
-                        border-radius:10px;
-                        padding:10px;
-                        margin-bottom:10px;
-                        background-color:#f9f9f9;">
-                        <b>CAM:</b> {row['CAM']}<br>
-                        <b>MAPA:</b> <span style="color:#2a7ae2;">{row['MAPA']}</span><br>
-                        <b>CAPAs:</b> {row['CAPA']}
-                    </div>
-                """, unsafe_allow_html=True)
-
         else:
             st.info("Nenhuma RM encontrada com MAPA sem STC.")
 
