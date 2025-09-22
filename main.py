@@ -181,10 +181,11 @@ if singra_file and pwa_file:
     # 🔹 BLOCO 2: RMs com MAPA sem STC
     # ===============================
     st.markdown("### 📋 RMs com MAPA porém sem STC")
+
     if all(col in df_pwa.columns for col in ['MAPA', 'STC', 'STATUS', 'CAM', 'CAPA']):
         df_mapa_sem_stc = df_pwa[
-            (df_pwa['MAPA'] != '') & 
-            (df_pwa['STC'] == '') & 
+            (df_pwa['MAPA'] != '') &
+            (df_pwa['STC'] == '') &
             (df_pwa['STATUS'] != 'EXPEDIDO')
         ]
 
@@ -193,13 +194,42 @@ if singra_file and pwa_file:
             agrupado_mapa = (
                 df_mapa_sem_stc.groupby(['CAM', 'MAPA'])
                 .agg({
-                    'CAPA': lambda x: ', '.join(sorted(set(x)))  # apenas CAPAs
+                    'CAPA': lambda x: ', '.join(sorted(set(x)))
                 })
                 .reset_index()
             )
 
-            # Exibir em dataframe
-            st.dataframe(agrupado_mapa.style.set_properties(**{'text-align': 'left'}))
+            # 🔹 Filtro por CAM
+            cams_disponiveis = ["Todos"] + sorted(agrupado_mapa['CAM'].unique().tolist())
+            cam_escolhido = st.selectbox("Filtrar por CAM", cams_disponiveis)
+
+            if cam_escolhido != "Todos":
+                agrupado_filtrado = agrupado_mapa[agrupado_mapa['CAM'] == cam_escolhido]
+            else:
+                agrupado_filtrado = agrupado_mapa
+
+            # 🔹 Mostrar dataframe compacto
+            st.dataframe(
+                agrupado_filtrado.style.set_properties(**{'text-align': 'left'}),
+                use_container_width=True
+            )
+
+            # 🔹 Mostrar também em formato de cards para leitura rápida
+            st.markdown("#### 📑 Visualização em Cards")
+            for _, row in agrupado_filtrado.iterrows():
+                st.markdown(f"""
+                    <div style="
+                        border:1px solid #ccc;
+                        border-radius:10px;
+                        padding:10px;
+                        margin-bottom:10px;
+                        background-color:#f9f9f9;">
+                        <b>CAM:</b> {row['CAM']}<br>
+                        <b>MAPA:</b> <span style="color:#2a7ae2;">{row['MAPA']}</span><br>
+                        <b>CAPAs:</b> {row['CAPA']}
+                    </div>
+                """, unsafe_allow_html=True)
+
         else:
             st.info("Nenhuma RM encontrada com MAPA sem STC.")
 
