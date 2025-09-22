@@ -65,6 +65,55 @@ if singra_file and pwa_file:
     df_lotes_user['LOTE'] = df_lotes_user['LOTE'].astype(str).str.strip()
 
     # ===============================
+    # 🔹 Nova aba: Consulta rápida de RMs via texto
+    # ===============================
+    st.markdown("### 🔍 Consulta rápida de RMs (via texto)")
+
+    with st.expander("Consultar RMs colando mensagem"):
+        texto_rms = st.text_area("Cole aqui a mensagem com as RMs", height=200)
+
+        if st.button("🔎 Consultar RMs no sistema"):
+            if texto_rms.strip():
+                import re
+
+                # Regex para capturar números no formato 99.999.999
+                rms_extraidas = re.findall(r"\b\d{2}\.\d{3}\.\d{3}\b", texto_rms)
+
+                if rms_extraidas:
+                    resultados = []
+
+                    for rm in rms_extraidas:
+                        # Remove os pontos para comparar com a planilha
+                        rm_sem_ponto = rm.replace(".", "")
+
+                        # Garante que também o df_pwa esteja sem pontos
+                        df_pwa['PEDIDO_LIMPO'] = df_pwa['PEDIDO'].astype(str).str.replace(".", "", regex=False)
+
+                        df_filtro = df_pwa[df_pwa['PEDIDO_LIMPO'] == rm_sem_ponto]
+
+                        if not df_filtro.empty:
+                            mapa = ', '.join(df_filtro['MAPA'].unique()) if any(df_filtro['MAPA'] != '') else "Não consta"
+                            stc = ', '.join(df_filtro['STC'].unique()) if any(df_filtro['STC'] != '') else "Não consta"
+                        else:
+                            mapa = "Não consta"
+                            stc = "Não consta"
+
+                        resultados.append({
+                            "RM (texto)": rm,
+                            "RM (planilha)": rm_sem_ponto,
+                            "MAPA": mapa,
+                            "STC": stc
+                        })
+
+                    df_resultados = pd.DataFrame(resultados)
+                    st.dataframe(df_resultados.style.set_properties(**{'text-align': 'left'}))
+                else:
+                    st.warning("⚠️ Nenhuma RM válida encontrada no texto.")
+            else:
+                st.info("Cole o texto acima e clique em **Consultar**.")
+
+
+    # ===============================
     # 🔹 BLOCO 1: CAPA completamente atendidas (considerando RM sem MAPA)
     # ===============================
     capa_completa = []
