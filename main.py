@@ -7,13 +7,12 @@ import re
 
 st.set_page_config(page_title="Controle de RM atendidas", layout="wide")
 st.title("📦 Controle de RMs - Estocagem e Expedição")
-st.markdown("Sistema com PWA como fonte da verdade. Verifica CAPA/RM/LOTE comparando PWA ⇄ planilha de conferência (Google) e SINGRA.")
+st.markdown("Sistema: PWA = fonte da verdade. BLOCO 1 agora considera somente RMs sem MAPA e reporta RMs que não migraram no SINGRA separadamente.")
 
 # ----------------------
 # Utilitários / Normalização
 # ----------------------
 def clean_colnames(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove aspas, espaços invisíveis e normaliza nomes de colunas."""
     df = df.copy()
     newcols = []
     for c in df.columns:
@@ -23,7 +22,6 @@ def clean_colnames(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def normalizar_codigo_rm(valor):
-    """Remove pontos/espacos e retorna string (preservando zeros se houver)."""
     if pd.isna(valor) or str(valor).strip() == '':
         return ''
     s = str(valor).strip().replace("'", "").replace('"', "")
@@ -36,11 +34,9 @@ def normalizar_lote(valor):
     return str(valor).strip().replace("'", "").replace('"', '')
 
 def singra_indica_em_expedicao(val: str) -> bool:
-    """Decide se a coluna SITUACAO no singra indica que a RM está em expedição."""
     if pd.isna(val) or str(val).strip() == '':
         return False
     v = str(val).strip().upper()
-    # aceitar variações: 'EM EXPEDIÇÃO', 'EXPEDICAO', 'EXPEDIDO' etc.
     return ('EXPED' in v) or ('EM EXPED' in v) or ('EXPEDIÇÃO' in v) or ('EXPEDICAO' in v)
 
 # ----------------------
@@ -51,7 +47,7 @@ def carregar_singra(file):
     df = pd.read_csv(file, sep=';', encoding='latin1', dtype=str, low_memory=False)
     df = clean_colnames(df)
     df = df.fillna('')
-    # Normalizações comuns
+    # Normalizações
     if 'ID' in df.columns:
         df['ID'] = df['ID'].apply(normalizar_codigo_rm)
     if 'SITUACAO' in df.columns:
@@ -67,23 +63,21 @@ def carregar_pwa(file):
     df = pd.read_excel(file, sheet_name=0, dtype=str)
     df = clean_colnames(df)
     df = df.fillna('')
-    # Normalizar campos
     for col in ['PEDIDO', 'CAPA', 'MAPA', 'STC', 'CAM', 'LOTE', 'STATUS']:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip()
-    # Normalizar PEDIDO removendo pontos para comparação (mas preservamos original)
+    # PEDIDO limpo para comparar (remove pontos e espaços)
     if 'PEDIDO' in df.columns:
         df['PEDIDO_LIMPO'] = df['PEDIDO'].apply(normalizar_codigo_rm)
     else:
         df['PEDIDO'] = ''
         df['PEDIDO_LIMPO'] = ''
-    # Normalize MAPA to integer-like string when present
+    # Normalize MAPA to integer-like string
     if 'MAPA' in df.columns:
         def mapa_to_intstr(x):
             x = str(x).strip()
             if x == '' or x.upper() == 'NAN':
                 return ''
-            # try float -> int to remove .0
             try:
                 if '.' in x:
                     return str(int(float(x)))
@@ -91,7 +85,7 @@ def carregar_pwa(file):
             except:
                 return x
         df['MAPA'] = df['MAPA'].apply(mapa_to_intstr)
-    # Upper STATUS for robust comparisons
+    # Upper STATUS
     if 'STATUS' in df.columns:
         df['STATUS'] = df['STATUS'].astype(str).str.strip().str.upper()
     return df
@@ -114,7 +108,7 @@ def carregar_lotes_google(credentials_dict: dict, sheet_url: str):
     return df
 
 # ----------------------
-# Uploads UI
+# UI: Uploads
 # ----------------------
 with st.expander("📄 Upload de arquivos"):
     singra_file = st.file_uploader("Upload planilha do SINGRA (.csv)", type=["csv"])
@@ -124,38 +118,40 @@ if not (singra_file and pwa_file):
     st.info("Faça upload do SINGRA (.csv) e do PWA (.xlsx) para prosseguir.")
     st.stop()
 
-# Carregar dados (cached)
+# ----------------------
+# Carrega dados (cached)
+# ----------------------
 df_singra = carregar_singra(singra_file)
 df_pwa = carregar_pwa(pwa_file)
 
-# Carregar lotes do Google Sheets (planilha de conferência)
+# Carregar planilha de lotes (Google Sheets)
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1naVnAlUGmeAMb_YftLGYit-1e1BcYFJgiJwSnOcgJf4/edit?gid=0"
 service_account_dict = dict(st.secrets["gcp_service_account"])
 df_lotes_user = carregar_lotes_google(service_account_dict, SHEET_URL)
 
-# Pré-process rápido: set de lotes disponíveis na conferência
+# Preprocess: set de lotes disponíveis na conferência (Google)
 lotes_disponiveis = set(df_lotes_user['LOTE'].astype(str).tolist()) if 'LOTE' in df_lotes_user.columns else set()
 
-# Adicional: mapear SINGRA por RM para checagens de migração/status
+# Map SINGRA: RM -> {SITUACAO, OMS}
 singra_map = {}
 if 'ID' in df_singra.columns:
     for rm, grp in df_singra.groupby('ID'):
-        # pegar primeira SITUACAO se existir
         situ = grp['SITUACAO'].iloc[0] if 'SITUACAO' in df_singra.columns else ''
         oms = grp['OMS'].iloc[0] if 'OMS' in df_singra.columns else ''
         singra_map[rm] = {'SITUACAO': situ, 'OMS': oms}
 
-# Preprocess PWA grouping para rapidez
-pwa_by_pedido = {pedido: g for pedido, g in df_pwa.groupby('PEDIDO_LIMPO')}
+# Precompute PWA maps for performance
+pwa_lotes_map = {pedido: sorted(set(g['LOTE'].astype(str).tolist())) for pedido, g in df_pwa.groupby('PEDIDO_LIMPO')}
+capa_to_rms = {capa: sorted(df_pwa[df_pwa['CAPA'] == capa]['PEDIDO_LIMPO'].unique().tolist()) for capa in sorted(df_pwa['CAPA'].unique().tolist())}
 
-# Debug counters / métricas
-col1, col2, col3 = st.columns(3)
-col1.metric("RMs (PWA únicas)", df_pwa['PEDIDO_LIMPO'].nunique())
-col2.metric("Linhas PWA", len(df_pwa))
-col3.metric("Lotes (planilha conf.)", len(lotes_disponiveis))
+# Quick metrics
+c1, c2, c3 = st.columns(3)
+c1.metric("RMs únicas (PWA)", df_pwa['PEDIDO_LIMPO'].nunique())
+c2.metric("Linhas PWA", len(df_pwa))
+c3.metric("Lotes na planilha (Google)", len(lotes_disponiveis))
 
 # ----------------------
-# Nova aba: Consulta rápida via texto (mantive sua UI)
+# Consulta rápida via texto (mantive)
 # ----------------------
 st.markdown("### 🔍 Consulta rápida de RMs (via texto)")
 with st.expander("Consultar RMs colando mensagem"):
@@ -165,7 +161,6 @@ with st.expander("Consultar RMs colando mensagem"):
             rms_extraidas = re.findall(r"\b\d{2}\.\d{3}\.\d{3}\b", texto_rms)
             if rms_extraidas:
                 rms_sem_ponto = [rm.replace(".", "") for rm in rms_extraidas]
-                # filtrar em bloco
                 df_filtro = df_pwa[df_pwa['PEDIDO_LIMPO'].isin(rms_sem_ponto)]
                 resultados = []
                 for rm_texto, rm_limpo in zip(rms_extraidas, rms_sem_ponto):
@@ -192,86 +187,96 @@ with st.expander("Consultar RMs colando mensagem"):
             st.info("Cole o texto e clique em Consultar.")
 
 # ----------------------
-# BLOCO 1: CAPA completamente atendidas (PWA = verdade) — LÓGICA NOVA
+# BLOCO 1 – NOVA LÓGICA (somente RMs sem MAPA)
 # ----------------------
-st.markdown("## 🔵 BLOCO 1 — CAPA: verificação completa (PWA como fonte de verdade)")
+st.markdown("## 🔵 BLOCO 1 — CAPA: verificação (somente RMs sem MAPA)")
 
-# Verificar colunas essenciais
 required_pwa_cols = ['PEDIDO_LIMPO', 'LOTE', 'CAPA', 'CAM', 'STATUS']
 if not all(c in df_pwa.columns for c in required_pwa_cols):
-    st.error("Colunas essenciais ausentes no PWA. Preciso de PEDIDO/LOTE/CAPA/CAM/STATUS.")
+    st.error("Colunas essenciais faltando no PWA: preciso de PEDIDO/LOTE/CAPA/CAM/STATUS.")
 else:
     capas = sorted(df_pwa['CAPA'].unique().tolist())
-
     capa_completa_rows = []
     capa_incompleta_rows = []
-
-    # précriar mapa de lotes por pedido (para performance)
-    pwa_lotes_map = {}
-    for pedido_limpo, g in df_pwa.groupby('PEDIDO_LIMPO'):
-        pwa_lotes_map[pedido_limpo] = sorted(set(g['LOTE'].astype(str).tolist()))
-    # também mapear CAPA -> pedidos
-    capa_to_rms = {}
-    for capa in capas:
-        capa_to_rms[capa] = sorted(df_pwa[df_pwa['CAPA'] == capa]['PEDIDO_LIMPO'].unique().tolist())
+    migration_errors = []  # tabela separada para RMs que não existem no SINGRA
 
     for capa in capas:
         rms_da_capa = capa_to_rms.get(capa, [])
-        cam = df_pwa[df_pwa['CAPA'] == capa]['CAM'].iloc[0] if len(df_pwa[df_pwa['CAPA'] == capa])>0 else ''
-        pendencias = []  # acumula strings descrevendo problemas por RM
+        cam = df_pwa[df_pwa['CAPA'] == capa]['CAM'].iloc[0] if len(df_pwa[df_pwa['CAPA'] == capa]) > 0 else ''
+        pendencias = []
 
+        # Consider only RMs that do NOT have MAPA (all rows for that pedido must have MAPA == '')
+        rms_considered = []
         for rm in rms_da_capa:
-            # pegar lotes esperados (PWA)
+            df_rm_rows = df_pwa[df_pwa['PEDIDO_LIMPO'] == rm]
+            # RM has MAPA if any row has MAPA not empty
+            rm_has_mapa = df_rm_rows['MAPA'].apply(lambda x: str(x).strip() != '').any()
+            if not rm_has_mapa:
+                rms_considered.append(rm)
+            # else: skip RM for bloco1 because it already has MAPA and belongs to other flow
+
+        # If no RMS to consider (all RMs have MAPA), skip showing this CAPA (it's handled elsewhere)
+        if len(rms_considered) == 0:
+            continue
+
+        # For each RM considered: check if all PWA LOTES are present in the Google sheet (planilha de conferência)
+        for rm in rms_considered:
             lotes_pwa = pwa_lotes_map.get(rm, [])
-            # verificar presença de RM no singra (por ID)
+            # Check if RM exists in SINGRA
             singra_info = singra_map.get(rm)
             if not singra_info:
-                # RM não existe no SINGRA: pendência crítica
+                # record migration error (and also treat as a pendency for this CAPA)
+                migration_errors.append({
+                    "RM": rm,
+                    "CAPA": capa,
+                    "CAM": cam,
+                    "Erro": "RM não encontra-se em Expedição no SINGRA"
+                })
                 pendencias.append(f"{rm} (Status SINGRA não migrou)")
                 continue
 
-            # Verificar se SINGRA marca como em expedição
-            situ = singra_info.get('SITUACAO', '')
-            if not singra_indica_em_expedicao(situ):
-                pendencias.append(f"{rm} (SITUACAO SINGRA: '{situ}' não indica expedição)")
-                continue
+            # Verify lotes presence in Google "lotes_disponiveis"
+            faltando = [l for l in lotes_pwa if l not in lotes_disponiveis]
+            if faltando:
+                pendencias.append(f"{rm} – faltando lotes: {', '.join(faltando)}")
 
-            # Verificar lotes: todos os lotes da RM (PWA) devem estar na planilha de conferência
-            faltando_lotes = [l for l in lotes_pwa if l not in lotes_disponiveis]
-            if faltando_lotes:
-                pendencias.append(f"{rm} – faltando lotes: {', '.join(faltando_lotes)}")
-
-        # decidir situação da CAPA
+        # Decide CAPA status
         if len(pendencias) == 0:
-            capa_completa_rows.append({"CAM": cam, "CAPA": capa, "RMs": ', '.join(rms_da_capa)})
+            capa_completa_rows.append({"CAM": cam, "CAPA": capa, "RMs": ', '.join(rms_considered)})
         else:
             capa_incompleta_rows.append({"CAM": cam, "CAPA": capa, "Pendências": '; '.join(pendencias)})
 
     df_capa_completa = pd.DataFrame(capa_completa_rows)
     df_capa_incompleta = pd.DataFrame(capa_incompleta_rows)
+    df_migration_errors = pd.DataFrame(migration_errors)
 
     # Resumo
-    col_a, col_b = st.columns(2)
-    col_a.success(f"CAPAs totalmente atendidas: {len(df_capa_completa)}")
-    col_b.warning(f"CAPAs com pendências: {len(df_capa_incompleta)}")
+    ca, cb = st.columns(2)
+    ca.success(f"CAPAs totalmente atendidas (apenas RMs sem MAPA): {len(df_capa_completa)}")
+    cb.warning(f"CAPAs com pendências (considerando RMs sem MAPA): {len(df_capa_incompleta)}")
 
-    st.subheader("✅ CAPAs completamente atendidas")
+    st.subheader("✅ CAPAs completamente atendidas (somente RMs sem MAPA)")
     if not df_capa_completa.empty:
         st.dataframe(df_capa_completa.style.set_properties(**{'text-align':'left'}), use_container_width=True)
     else:
-        st.info("Nenhuma CAPA completamente atendida segundo a nova regra.")
+        st.info("Nenhuma CAPA completamente atendida (considerando somente RMs sem MAPA).")
 
     st.subheader("⚠️ CAPAs parcialmente atendidas (detalhes)")
     if not df_capa_incompleta.empty:
         st.dataframe(df_capa_incompleta.style.set_properties(**{'text-align':'left'}), use_container_width=True)
     else:
-        st.info("Nenhuma CAPA parcialmente atendida encontrada.")
+        st.info("Nenhuma CAPA parcialmente atendida encontrada (para RMs sem MAPA).")
+
+    st.subheader("🚨 RMs do PWA que não constam no SINGRA (migração)")
+    if not df_migration_errors.empty:
+        st.dataframe(df_migration_errors.style.set_properties(**{'text-align':'left'}), use_container_width=True)
+    else:
+        st.info("Nenhuma RM do PWA ausente no SINGRA encontrada.")
 
 # ----------------------
-# BLOCO 2: MAPA sem STC (agrupado por CAM e MAPA), excluir EXPEDIDO
+# BLOCO 2: MAPA sem STC (agrupar por CAM e MAPA) — excluir STATUS EXPEDIDO
 # ----------------------
 st.markdown("## 🔷 BLOCO 2 — MAPA sem STC (agrupar por CAM e MAPA)")
-
 if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA']):
     df_mapa_sem_stc = df_pwa[
         (df_pwa['MAPA'] != '') &
@@ -297,7 +302,6 @@ else:
 # BLOCO 3: STC não expedidas (agrupar por CAM e STC)
 # ----------------------
 st.markdown("## 🔶 BLOCO 3 — STC não expedidas (agrupar por CAM e STC)")
-
 if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA']):
     df_stc_nao_expedida = df_pwa[
         (df_pwa['STC'] != '') &
@@ -320,7 +324,7 @@ else:
     st.info("Colunas necessárias para Bloco 3 ausentes no PWA.")
 
 # ----------------------
-# Exportação Excel (inclui dados de depuração)
+# Exportação Excel (inclui debug tables)
 # ----------------------
 def to_excel(dfs, names):
     out = BytesIO()
@@ -334,7 +338,6 @@ def to_excel(dfs, names):
 
 with st.expander("📥 Exportar resultados"):
     if st.button("Gerar Excel de saída"):
-        # montar objetos para export
         export_dfs = [
             df_capa_completa if 'df_capa_completa' in locals() else pd.DataFrame(),
             df_capa_incompleta if 'df_capa_incompleta' in locals() else pd.DataFrame(),
@@ -342,9 +345,10 @@ with st.expander("📥 Exportar resultados"):
             agrupado_stc if 'agrupado_stc' in locals() else pd.DataFrame(),
             df_singra if 'df_singra' in locals() else pd.DataFrame(),
             df_pwa if 'df_pwa' in locals() else pd.DataFrame(),
-            df_lotes_user if 'df_lotes_user' in locals() else pd.DataFrame()
+            df_lotes_user if 'df_lotes_user' in locals() else pd.DataFrame(),
+            df_migration_errors if 'df_migration_errors' in locals() else pd.DataFrame()
         ]
-        names = ["CAPA_Atendidas", "CAPA_Pendentes", "MAPA_sem_STC", "STC_nao_expedida", "SINGRA_RAW", "PWA_RAW", "LOTES_CONFERENCIA"]
+        names = ["CAPA_Atendidas", "CAPA_Pendentes", "MAPA_sem_STC", "STC_nao_expedida", "SINGRA_RAW", "PWA_RAW", "LOTES_CONFERENCIA", "MIGRATION_ERRORS"]
         excel_bytes = to_excel(export_dfs, names)
         st.download_button(
             label="📥 Baixar Excel completo",
@@ -353,4 +357,4 @@ with st.expander("📥 Exportar resultados"):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-st.markdown("✅ Regra aplicada: **PWA = fonte da verdade**. CAPA completa somente se todas as RMs da CAPA estão com todos os lotes lançados na planilha de conferência e com SINGRA indicando expedição.")
+st.markdown("✅ Regras aplicadas: (1) PWA = fonte da verdade; (2) BLOCO 1 considera apenas RMs sem MAPA; (3) CAPA completa somente se todos os LOTES dessas RMs estiverem lançados na planilha de conferência; (4) RMs do PWA ausentes no SINGRA aparecem em tabela separada ('RM não encontra-se em Expedição no SINGRA').")
