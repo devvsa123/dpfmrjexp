@@ -301,7 +301,7 @@ else:
 # ----------------------
 # BLOCO 3: MAPA sem STC + LOTE confirmado na expedição
 # ----------------------
-st.markdown("## 🔷 BLOCO 5 — MAPA sem STC com LOTE confirmado na expedição (agrupar por CAM e MAPA)")
+st.markdown("## 🔷 BLOCO 3 — MAPA sem STC com LOTE confirmado na expedição (agrupar por CAM e MAPA)")
 
 # Verificar colunas necessárias
 if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA','LOTE']) and \
@@ -332,7 +332,7 @@ if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA','LOTE'])
         if df_mapa_com_lote_real.empty:
             st.info("Nenhuma MAPA sem STC possui lote confirmado na expedição.")
         else:
-            # Agrupar igual ao bloco 2
+            # Agrupar igual ao bloco 3
             agrupado_mapa5 = (
                 df_mapa_com_lote_real.groupby(['CAM', 'MAPA'])
                 .agg({'CAPA': lambda x: ', '.join(sorted(set(x))),
@@ -342,7 +342,7 @@ if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA','LOTE'])
 
             # Filtro por CAM
             cams5 = ["Todos"] + sorted(agrupado_mapa5['CAM'].unique().tolist())
-            cam_sel5 = st.selectbox("Filtrar por CAM (Bloco 5)", cams5)
+            cam_sel5 = st.selectbox("Filtrar por CAM (Bloco 3)", cams5)
 
             display5 = agrupado_mapa5 if cam_sel5 == "Todos" else agrupado_mapa5[agrupado_mapa5['CAM'] == cam_sel5]
 
@@ -353,12 +353,12 @@ if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA','LOTE'])
             )
 
 else:
-    st.info("Colunas necessárias para Bloco 5 ausentes no PWA ou no arquivo de LOTE.")
+    st.info("Colunas necessárias para Bloco 3 ausentes no PWA ou no arquivo de LOTE.")
 
 # ----------------------
 # BLOCO 4: STC não expedidas (agrupar por CAM e STC)
 # ----------------------
-st.markdown("## 🔶 BLOCO 3 — STC não expedidas (agrupar por CAM e STC)")
+st.markdown("## 🔶 BLOCO 4 — STC não expedidas (agrupar por CAM e STC)")
 if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA']):
     df_stc_nao_expedida = df_pwa[
         (df_pwa['STC'] != '') &
@@ -374,17 +374,17 @@ if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA']):
             .reset_index()
         )
         cams3 = ["Todos"] + sorted(agrupado_stc['CAM'].unique().tolist())
-        cam_sel3 = st.selectbox("Filtrar por CAM (Bloco 3)", cams3)
+        cam_sel3 = st.selectbox("Filtrar por CAM (Bloco 4)", cams3)
         display3 = agrupado_stc if cam_sel3 == "Todos" else agrupado_stc[agrupado_stc['CAM'] == cam_sel3]
         st.dataframe(display3.style.set_properties(**{'text-align':'left'}), use_container_width=True)
 else:
-    st.info("Colunas necessárias para Bloco 3 ausentes no PWA.")
+    st.info("Colunas necessárias para Bloco 4 ausentes no PWA.")
 
 # ============================
 # 🔷 BLOCO 5 — STC não expedidas (agrupar por CAM e STC) com LOTE confirmado na Expedição
 # ============================
 
-st.markdown("## 🔷 BLOCO 4 — STC com lote confirmado na expedição (agrupar por CAM e STC)")
+st.markdown("## 🔷 BLOCO 5 — STC com lote confirmado na expedição (agrupar por CAM e STC)")
 
 # Verificar se todas as colunas necessárias existem
 if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA','LOTE']) and \
@@ -408,7 +408,7 @@ if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA','LOTE']) and \
     if df_stc_com_lote_real.empty:
         st.info("Nenhuma STC encontrada com lote confirmado na expedição.")
     else:
-        # Agrupar (mesmo modelo do bloco 3)
+        # Agrupar (mesmo modelo do bloco 5)
         agrupado_stc4 = (
             df_stc_com_lote_real.groupby(['CAM','STC'])
             .agg({
@@ -420,7 +420,7 @@ if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA','LOTE']) and \
 
         # Filtro por CAM
         cams4 = ["Todos"] + sorted(agrupado_stc4['CAM'].unique().tolist())
-        cam_sel4 = st.selectbox("Filtrar por CAM (Bloco 4)", cams4)
+        cam_sel4 = st.selectbox("Filtrar por CAM (Bloco 5)", cams4)
 
         display4 = agrupado_stc4 if cam_sel4 == "Todos" else agrupado_stc4[agrupado_stc4['CAM'] == cam_sel4]
 
@@ -463,5 +463,3 @@ with st.expander("📥 Exportar resultados"):
             file_name="resultado_controle_rm_completo.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-st.markdown("✅ Regras aplicadas: (1) PWA = fonte da verdade; (2) BLOCO 1 considera apenas RMs sem MAPA; (3) CAPA completa somente se todos os LOTES dessas RMs estiverem lançados na planilha de conferência; (4) RMs do PWA ausentes no SINGRA aparecem em tabela separada ('RM não encontra-se em Expedição no SINGRA').")
