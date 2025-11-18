@@ -299,7 +299,64 @@ else:
     st.info("Colunas necessárias para Bloco 2 ausentes no PWA.")
 
 # ----------------------
-# BLOCO 3: STC não expedidas (agrupar por CAM e STC)
+# BLOCO 3: MAPA sem STC + LOTE confirmado na expedição
+# ----------------------
+st.markdown("## 🔷 BLOCO 5 — MAPA sem STC com LOTE confirmado na expedição (agrupar por CAM e MAPA)")
+
+# Verificar colunas necessárias
+if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA','LOTE']) and \
+   'LOTE' in df_lotes_user.columns:
+
+    # MAPA sem STC e não expedido
+    df_mapa_sem_stc = df_pwa[
+        (df_pwa['MAPA'] != '') &
+        (df_pwa['STC'] == '') &
+        (df_pwa['STATUS'] != 'EXPEDIDO')
+    ]
+
+    # Se nada encontrado, parar
+    if df_mapa_sem_stc.empty:
+        st.info("Nenhuma MAPA sem STC encontrada para este filtro.")
+    else:
+
+        # Padronizar LOTE para comparação
+        df_mapa_sem_stc['LOTE'] = df_mapa_sem_stc['LOTE'].astype(str).str.strip()
+        df_lotes_user['LOTE']   = df_lotes_user['LOTE'].astype(str).str.strip()
+
+        # Obter lotes realmente confirmados
+        lotes_validos = set(df_lotes_user['LOTE'].unique())
+
+        # Filtrar somente linhas cujos lotes constam na planilha de LOTE
+        df_mapa_com_lote_real = df_mapa_sem_stc[df_mapa_sem_stc['LOTE'].isin(lotes_validos)]
+
+        if df_mapa_com_lote_real.empty:
+            st.info("Nenhuma MAPA sem STC possui lote confirmado na expedição.")
+        else:
+            # Agrupar igual ao bloco 2
+            agrupado_mapa5 = (
+                df_mapa_com_lote_real.groupby(['CAM', 'MAPA'])
+                .agg({'CAPA': lambda x: ', '.join(sorted(set(x))),
+                      'LOTE': lambda x: ', '.join(sorted(set(x)))})
+                .reset_index()
+            )
+
+            # Filtro por CAM
+            cams5 = ["Todos"] + sorted(agrupado_mapa5['CAM'].unique().tolist())
+            cam_sel5 = st.selectbox("Filtrar por CAM (Bloco 5)", cams5)
+
+            display5 = agrupado_mapa5 if cam_sel5 == "Todos" else agrupado_mapa5[agrupado_mapa5['CAM'] == cam_sel5]
+
+            # Exibir
+            st.dataframe(
+                display5.style.set_properties(**{'text-align':'left'}),
+                use_container_width=True
+            )
+
+else:
+    st.info("Colunas necessárias para Bloco 5 ausentes no PWA ou no arquivo de LOTE.")
+
+# ----------------------
+# BLOCO 4: STC não expedidas (agrupar por CAM e STC)
 # ----------------------
 st.markdown("## 🔶 BLOCO 3 — STC não expedidas (agrupar por CAM e STC)")
 if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA']):
@@ -324,7 +381,7 @@ else:
     st.info("Colunas necessárias para Bloco 3 ausentes no PWA.")
 
 # ============================
-# 🔷 BLOCO 4 — STC não expedidas (agrupar por CAM e STC) com LOTE confirmado na Expedição
+# 🔷 BLOCO 5 — STC não expedidas (agrupar por CAM e STC) com LOTE confirmado na Expedição
 # ============================
 
 st.markdown("## 🔷 BLOCO 4 — STC com lote confirmado na expedição (agrupar por CAM e STC)")
