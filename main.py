@@ -323,6 +323,56 @@ if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA']):
 else:
     st.info("Colunas necessárias para Bloco 3 ausentes no PWA.")
 
+# ============================
+# 🔷 BLOCO 4 — STC não expedidas (agrupar por CAM e STC) com LOTE confirmado na Expedição
+# ============================
+
+st.markdown("## 🔷 BLOCO 4 — STC com lote confirmado na expedição (agrupar por CAM e STC)")
+
+# Verificar se todas as colunas necessárias existem
+if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA','LOTE']) and \
+   'LOTE' in df_lotes_user.columns:
+
+    # Selecionar apenas STC válidas
+    df_stc_validas = df_pwa[
+        (df_pwa['STC'] != '') &
+        (df_pwa['STATUS'] != 'EXPEDIDO') &
+        (df_pwa['STATUS'] != 'CANCELADO')
+    ]
+
+    # Garantir que o LOTE seja comparável (remover espaços e converter para string)
+    df_stc_validas['LOTE'] = df_stc_validas['LOTE'].astype(str).str.strip()
+    df_lotes_user['LOTE'] = df_lotes_user['LOTE'].astype(str).str.strip()
+
+    # Filtrar apenas LOTE realmente existente na planilha LOTE (Google Sheets)
+    lotes_validos = set(df_lotes_user['LOTE'].unique())
+    df_stc_com_lote_real = df_stc_validas[df_stc_validas['LOTE'].isin(lotes_validos)]
+
+    if df_stc_com_lote_real.empty:
+        st.info("Nenhuma STC encontrada com lote confirmado na expedição.")
+    else:
+        # Agrupar (mesmo modelo do bloco 3)
+        agrupado_stc4 = (
+            df_stc_com_lote_real.groupby(['CAM','STC'])
+            .agg({
+                'MAPA': lambda x: ', '.join(sorted(set([m for m in x if m and m != '']))),
+                'LOTE': lambda x: ', '.join(sorted(set(x)))
+            })
+            .reset_index()
+        )
+
+        # Filtro por CAM
+        cams4 = ["Todos"] + sorted(agrupado_stc4['CAM'].unique().tolist())
+        cam_sel4 = st.selectbox("Filtrar por CAM (Bloco 4)", cams4)
+
+        display4 = agrupado_stc4 if cam_sel4 == "Todos" else agrupado_stc4[agrupado_stc4['CAM'] == cam_sel4]
+
+        # Exibir tabela
+        st.dataframe(
+            display4.style.set_properties(**{'text-align':'left'}),
+            use_container_width=True
+        )
+
 # ----------------------
 # Exportação Excel (inclui debug tables)
 # ----------------------
