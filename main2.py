@@ -582,3 +582,116 @@ with st.expander("📥 Exportar resultados"):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+# ============================================================
+# 🚀 NOVO MÓDULO — ANÁLISE DE LOTE E CAPA COMPLETAMENTE ATENDIDOS
+# ============================================================
+
+st.markdown("---")
+st.header("📦 Análise de Lotes e Capas Completamente Atendidos")
+
+# 1. Conjunto de VOLUMES que estão fisicamente na expedição (planilha LOTE)
+volumes_exp = set(df_lotes_user["LOTE"].astype(str).tolist())
+
+# 2. Garantir tipagem correta no PWA
+df_pwa["VOLUME"] = df_pwa["VOLUME"].astype(str).str.strip()
+df_pwa["LOTE"] = df_pwa["LOTE"].astype(str).str.strip()
+df_pwa["CAPA"] = df_pwa["CAPA"].astype(str).str.strip()
+
+# 3. Agrupamentos
+# LOTES → lista de volumes de cada lote
+lote_to_volumes = {
+    lote: set(grupo["VOLUME"].tolist())
+    for lote, grupo in df_pwa.groupby("LOTE")
+}
+
+# CAPA → LOTES associados
+capa_to_lotes = {
+    capa: set(grupo["LOTE"].unique().tolist())
+    for capa, grupo in df_pwa.groupby("CAPA")
+}
+
+# ============================================================
+# 4. Identificar LOTES completamente atendidos
+# ============================================================
+
+lotes_completos = []
+lotes_incompletos = []
+
+for lote, volumes_lote in lote_to_volumes.items():
+
+    # volumes faltantes = volumes do lote que não estão na planilha LOTE
+    volumes_faltando = volumes_lote - volumes_exp
+
+    if len(volumes_faltando) == 0:
+        lotes_completos.append({
+            "LOTE": lote,
+            "TOTAL VOLUMES": len(volumes_lote),
+            "STATUS": "COMPLETO"
+        })
+    else:
+        lotes_incompletos.append({
+            "LOTE": lote,
+            "TOTAL VOLUMES": len(volumes_lote),
+            "VOLUMES FALTANTES": ", ".join(sorted(volumes_faltando)),
+            "STATUS": "INCOMPLETO"
+        })
+
+df_lotes_completos = pd.DataFrame(lotes_completos)
+df_lotes_incompletos = pd.DataFrame(lotes_incompletos)
+
+# ============================================================
+# 5. Identificar CAPAS completamente atendidas
+# ============================================================
+
+capas_completas = []
+capas_incompletas = []
+
+# transforma lotes completos em set para performance
+lotes_completos_set = set(df_lotes_completos["LOTE"].tolist()) if not df_lotes_completos.empty else set()
+
+for capa, lotes_da_capa in capa_to_lotes.items():
+
+    # Se todos os LOTES dessa CAPA estão completos → CAPA completa
+    if lotes_da_capa.issubset(lotes_completos_set):
+        capas_completas.append({"CAPA": capa, "TOTAL LOTES": len(lotes_da_capa), "STATUS": "COMPLETA"})
+    else:
+        lotes_faltantes = lotes_da_capa - lotes_completos_set
+        capas_incompletas.append({
+            "CAPA": capa,
+            "TOTAL LOTES": len(lotes_da_capa),
+            "LOTES NÃO ATENDIDOS": ", ".join(sorted(lotes_faltantes)),
+            "STATUS": "INCOMPLETA"
+        })
+
+df_capas_completas = pd.DataFrame(capas_completas)
+df_capas_incompletas = pd.DataFrame(capas_incompletas)
+
+# ============================================================
+# 6. EXIBIÇÃO
+# ============================================================
+
+st.subheader("✅ LOTES Completamente Atendidos")
+if df_lotes_completos.empty:
+    st.info("Nenhum LOTE completamente atendido ainda.")
+else:
+    st.dataframe(df_lotes_completos, use_container_width=True)
+
+st.subheader("⚠️ LOTES Incompletos")
+if df_lotes_incompletos.empty:
+    st.success("Todos os LOTES estão completos!")
+else:
+    st.dataframe(df_lotes_incompletos, use_container_width=True)
+
+st.subheader("🏁 CAPAS Completamente Atendidas")
+if df_capas_completas.empty:
+    st.info("Nenhuma CAPA completamente atendida ainda.")
+else:
+    st.dataframe(df_capas_completas, use_container_width=True)
+
+st.subheader("📍 CAPAS Incompletas")
+if df_capas_incompletas.empty:
+    st.success("Todas as CAPAS estão completas!")
+else:
+    st.dataframe(df_capas_incompletas, use_container_width=True)
+
+
