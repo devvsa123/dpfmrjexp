@@ -1,0 +1,274 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+from io import BytesIO
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import re
+
+st.set_page_config(page_title="Controle de RM atendidas", layout="wide")
+st.title("📦 Controle de RMs - Estocagem e Expedição")
+st.markdown("Sistema: PWA = fonte da verdade. Bloco 1 com validação rigorosa de CAPAS prontas, parciais e pendentes.")
+
+# ----------------------
+# Utilitários / Normalização
+# ----------------------
+def clean_colnames(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(c).replace('\ufeff', '').replace("'", "").replace('"', '').strip().upper() for c in df.columns]
+    return df
+
+def normalizar_codigo_rm(valor):
+    if pd.isna(valor) or str(valor).strip() == '':
+        return ''
+    s = str(valor).replace('\ufeff', '').strip().replace("'", "").replace('"', "")
+    s = s.replace(".", "").replace(",", "").replace(" ", "")
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
+def normalizar_lote(valor):
+    if pd.isna(valor):
+        return ''
+    v_str = str(valor).replace('\ufeff', '').strip().replace("'", "").replace('"', '')
+    if v_str.endswith('.0'):
+        v_str = v_str[:-2]
+    return v_str
+
+# ----------------------
+# Cache: carregamento de dados
+# ----------------------
+@st.cache_data
+def carregar_singra(file):
+    try:
+        df = pd.read_csv(file, sep=';', encoding='utf-8-sig', dtype=str, low_memory=False)
+    except:
+        df = pd.read_csv(file, sep=';', encoding='latin1', dtype=str, low_memory=False)
+    
+    df = clean_colnames(df)
+    df = df.fillna('')
+    
+    # Busca inteligente da coluna ID caso venha com sujeira
+    if 'ID' not in df.columns:
+        for col in df.columns:
+            if 'ID' in col:
+                df.rename(columns={col: 'ID'}, inplace=True)
+                break
+                
+    if 'ID' in df.columns:
+        df['ID'] = df['ID'].apply(normalizar_codigo_rm)
+    return df
+
+@st.cache_data
+def carregar_pwa(file):
+    df = pd.read_excel(file, sheet_name=0, dtype=str)
+    df = clean_colnames(df)
+    df = df.fillna('')
+    
+    cols_to_clean = ['PEDIDO', 'CAPA', 'MAPA', 'STC', 'CAM', 'LOTE', 'STATUS']
+    for col in cols_to_clean:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+            
+    if 'PEDIDO' in df.columns:
+        df['PEDIDO_LIMPO'] = df['PEDIDO'].apply(normalizar_codigo_rm)
+    else:
+        df['PEDIDO_LIMPO'] = ''
+        
+    return df
+
+@st.cache_data(ttl=3600)
+def carregar_lotes_google(credentials_dict: dict, sheet_url: str):
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(
+        credentials_dict,
+        ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    )
+    client = gspread.authorize(creds)
+    sheet = client.open_by_url(sheet_url)
+    worksheet = sheet.get_worksheet(0)
+    data = worksheet.get_all_records()
+    df = pd.DataFrame(data)
+    df = clean_colnames(df)
+    df = df.fillna('')
+    if 'LOTE' in df.columns:
+        df['LOTE'] = df['LOTE'].apply(normalizar_lote)
+    return df
+
+# ----------------------
+# UI: Uploads
+# ----------------------
+with st.expander("📄 Upload de arquivos", expanded=True):
+    col1, col2 = st.columns(2)
+    with col1:
+        singra_file = st.file_uploader("Upload planilha do SINGRA (.csv)", type=["csv"])
+    with col2:
+        pwa_file = st.file_uploader("Upload planilha do PWA (.xlsx)", type=["xlsx"])
+
+if not (singra_file and pwa_file):
+    st.info("Faça upload do SINGRA (.csv) e do PWA (.xlsx) para prosseguir.")
+    st.stop()
+
+# Carregamento
+df_singra = carregar_singra(singra_file)
+df_pwa = carregar_pwa(pwa_file)
+
+# Carregar Lotes (Google Sheets)
+try:
+    SHEET_URL = "https://docs.google.com/spreadsheets/d/1naVnAlUGmeAMb_YftLGYit-1e1BcYFJgiJwSnOcgJf4/edit?gid=0"
+    service_account_dict = dict(st.secrets["gcp_service_account"])
+    df_lotes_user = carregar_lotes_google(service_account_dict, SHEET_URL)
+except Exception as e:
+    st.error(f"Erro ao conectar com o Google Sheets: {e}")
+    st.stop()
+
+# ----------------------
+# Preparação dos Conjuntos (Sets) para Validação Rápida
+# ----------------------
+lotes_disponiveis = set(df_lotes_user['LOTE'].apply(normalizar_lote)) if 'LOTE' in df_lotes_user.columns else set()
+# Remove lotes vazios do set para não dar falso positivo
+lotes_disponiveis.discard('') 
+
+pedidos_singra = set()
+if 'ID' in df_singra.columns:
+    pedidos_singra = set(df_singra['ID'].dropna().tolist())
+pedidos_singra.discard('')
+
+c1, c2, c3 = st.columns(3)
+c1.metric("RMs únicas (PWA)", df_pwa['PEDIDO_LIMPO'].nunique())
+c2.metric("RMs no SINGRA", len(pedidos_singra))
+c3.metric("Lotes conferidos (Google)", len(lotes_disponiveis))
+
+st.divider()
+
+# ----------------------
+# BLOCO 1 – A NOVA LÓGICA CORRIGIDA
+# ----------------------
+st.markdown("## 🔵 BLOCO 1 — Status das CAPAs")
+
+required_pwa_cols = ['PEDIDO_LIMPO', 'LOTE', 'CAPA', 'CAM', 'STATUS']
+if not all(c in df_pwa.columns for c in required_pwa_cols):
+    st.error(f"Colunas essenciais faltando no PWA. Necessário: {required_pwa_cols}")
+else:
+    capas_prontas = []
+    capas_parciais = []
+    capas_pendentes = []
+    capas_com_mapa = []
+
+    # Agrupar PWA por CAPA
+    for capa, grupo in df_pwa.groupby('CAPA'):
+        if pd.isna(capa) or str(capa).strip() == '':
+            continue
+            
+        cam = str(grupo['CAM'].iloc[0]) if 'CAM' in grupo.columns else ''
+
+        # 1. Checagem de MAPA
+        # Se qualquer item na CAPA tiver um MAPA preenchido, ela já está prontificada/em outro fluxo
+        tem_mapa = grupo['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna().any()
+        if tem_mapa:
+            rms_mapa = set(grupo['PEDIDO_LIMPO'].dropna().tolist())
+            capas_com_mapa.append({"CAPA": capa, "CAM": cam, "RMs": ", ".join(sorted(rms_mapa))})
+            continue
+
+        # 2. Separar Itens Ativos de Cancelados
+        mascara_cancelado = grupo['STATUS'].astype(str).str.upper() == 'CANCELADO'
+        tem_cancelado = mascara_cancelado.any()
+        grupo_ativo = grupo[~mascara_cancelado]
+
+        if grupo_ativo.empty:
+            continue # CAPA inteira cancelada, ignoramos.
+
+        # 3. Extrair Lotes e Pedidos ativos da CAPA
+        lotes_ativos = set(grupo_ativo['LOTE'].apply(normalizar_lote))
+        lotes_ativos.discard('') # Remove vazios
+        
+        pedidos_ativos = set(grupo_ativo['PEDIDO_LIMPO'].apply(normalizar_codigo_rm))
+        pedidos_ativos.discard('')
+
+        # 4. A mágica da diferença de conjuntos para achar exatamente o erro
+        lotes_faltantes = lotes_ativos - lotes_disponiveis
+        pedidos_faltantes_singra = pedidos_ativos - pedidos_singra
+
+        # 5. Classificação
+        if not lotes_faltantes and not pedidos_faltantes_singra:
+            # Tudo perfeito! Nenhum lote ou pedido faltando.
+            if tem_cancelado:
+                capas_parciais.append({
+                    "CAPA": capa, 
+                    "CAM": cam, 
+                    "RMs Ativas (Prontas)": ", ".join(sorted(pedidos_ativos)),
+                    "Aviso": "Contém RMs Canceladas"
+                })
+            else:
+                capas_prontas.append({
+                    "CAPA": capa, 
+                    "CAM": cam, 
+                    "RMs (100% Prontas)": ", ".join(sorted(pedidos_ativos))
+                })
+        else:
+            # Tem pendência! Vamos registrar exatamente o que é.
+            pendencias_desc = []
+            if lotes_faltantes:
+                pendencias_desc.append(f"Lotes ausentes na conf.: {', '.join(sorted(lotes_faltantes))}")
+            if pedidos_faltantes_singra:
+                pendencias_desc.append(f"RMs fora do SINGRA: {', '.join(sorted(pedidos_faltantes_singra))}")
+                
+            capas_pendentes.append({
+                "CAPA": capa,
+                "CAM": cam,
+                "RMs da CAPA": ", ".join(sorted(pedidos_ativos)),
+                "O que falta resolver?": " | ".join(pendencias_desc)
+            })
+
+    # Criar DataFrames
+    df_prontas = pd.DataFrame(capas_prontas)
+    df_parciais = pd.DataFrame(capas_parciais)
+    df_pendentes = pd.DataFrame(capas_pendentes)
+    df_com_mapa = pd.DataFrame(capas_com_mapa)
+
+    # Exibição
+    t1, t2, t3 = st.tabs(["✅ 100% Prontas", "⚠️ Pendentes / Incompletas", "🔶 Parciais (C/ Cancelamento)"])
+    
+    with t1:
+        st.success(f"**{len(df_prontas)} CAPAs totalmente prontas** para expedir (sem pendências, sem cancelamentos).")
+        if not df_prontas.empty:
+            st.dataframe(df_prontas, use_container_width=True)
+            
+    with t2:
+        st.error(f"**{len(df_pendentes)} CAPAs com problemas.** Veja a coluna 'O que falta resolver?' para corrigir.")
+        if not df_pendentes.empty:
+            st.dataframe(df_pendentes, use_container_width=True)
+            
+    with t3:
+        st.warning(f"**{len(df_parciais)} CAPAs parcialmente prontas.** Os itens ativos estão ok, mas a CAPA possui itens cancelados.")
+        if not df_parciais.empty:
+            st.dataframe(df_parciais, use_container_width=True)
+
+# ----------------------
+# Exportação Excel Atualizada
+# ----------------------
+def to_excel(dfs, names):
+    out = BytesIO()
+    with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+        for df, name in zip(dfs, names):
+            if not df.empty:
+                df.to_excel(writer, sheet_name=name, index=False)
+    return out.getvalue()
+
+st.divider()
+st.markdown("### 📥 Exportar Resultados")
+if st.button("Gerar Excel de Saída"):
+    export_dfs = [
+        df_prontas if 'df_prontas' in locals() else pd.DataFrame(),
+        df_pendentes if 'df_pendentes' in locals() else pd.DataFrame(),
+        df_parciais if 'df_parciais' in locals() else pd.DataFrame(),
+        df_com_mapa if 'df_com_mapa' in locals() else pd.DataFrame()
+    ]
+    names = ["CAPAS_100_Prontas", "CAPAS_Pendentes", "CAPAS_Parciais", "CAPAS_Ja_Com_Mapa"]
+    
+    excel_bytes = to_excel(export_dfs, names)
+    st.download_button(
+        label="📥 Baixar Relatório de CAPAs",
+        data=excel_bytes,
+        file_name="relatorio_expedicao_capas.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
