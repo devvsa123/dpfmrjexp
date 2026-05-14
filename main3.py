@@ -304,3 +304,31 @@ if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA']):
         st.dataframe(display.style.set_properties(**{'text-align':'left'}), use_container_width=True)
 else:
     st.info("Colunas necessárias para Bloco 2 ausentes no PWA.")
+
+st.divider()
+
+# ----------------------
+# BLOCO 3: STC não expedidas (agrupar por CAM e STC)
+# ----------------------
+st.markdown("## 🔶 BLOCO 3 — STC não expedidas (agrupar por CAM e STC)")
+
+if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA']):
+    df_stc_nao_expedida = df_pwa[
+        (df_pwa['STC'] != '') &
+        (df_pwa['STATUS'] != 'EXPEDIDO') &
+        (df_pwa['STATUS'] != 'CANCELADO')
+    ]
+    if df_stc_nao_expedida.empty:
+        st.info("Nenhuma STC pendente.")
+    else:
+        agrupado_stc = (
+            df_stc_nao_expedida.groupby(['CAM','STC'])
+            .agg({'MAPA': lambda x: ', '.join(sorted(set([m for m in x if m and m != ''])))})
+            .reset_index()
+        )
+        cams3 = ["Todos"] + sorted(agrupado_stc['CAM'].unique().tolist())
+        cam_sel3 = st.selectbox("Filtrar por CAM (BLOCO 3)", cams3)
+        display3 = agrupado_stc if cam_sel3 == "Todos" else agrupado_stc[agrupado_stc['CAM'] == cam_sel3]
+        st.dataframe(display3.style.set_properties(**{'text-align':'left'}), use_container_width=True)
+else:
+    st.info("Colunas necessárias para BLOCO 3 ausentes no PWA.")
