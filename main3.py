@@ -145,19 +145,21 @@ c3.metric("Lotes conferidos (Google)", len(lotes_disponiveis))
 st.divider()
 
 # ----------------------
-# BLOCO 1 – VISÃO POR CAPA E VISÃO POR RM
+# BLOCO 1 – VISÃO POR CAPA E VISÃO POR RM (REGRAS DE MAPA E EXPEDIÇÃO)
 # ----------------------
-st.markdown("## 🔵 BLOCO 1 — Status de Processamento")
+st.markdown("## 🔵 BLOCO 1 — Status de Processamento e Expedição")
 
-required_pwa_cols = ['PEDIDO_LIMPO', 'LOTE', 'CAPA', 'CAM', 'STATUS']
+required_pwa_cols = ['PEDIDO_LIMPO', 'LOTE', 'CAPA', 'CAM', 'STATUS', 'MAPA']
 if not all(c in df_pwa.columns for c in required_pwa_cols):
     st.error(f"Colunas essenciais faltando no PWA. Necessário: {required_pwa_cols}")
 else:
     # --- PROCESSAMENTO DOS DADOS ---
     lista_rm_final = []
     capas_prontas = []
-    capas_parciais = []
-    capas_pendentes = []
+    capas_parciais = []     # Prontas, mas derivadas de um pedido com cancelamento
+    capas_pendentes = []    # Faltam lotes físicos na expedição ou status no Singra
+    capas_incompletas = []  # MAPA quebrado (algumas RMs têm MAPA, outras não)
+    capas_finalizadas = []  # 100% das RMs ativas já possuem MAPA
 
     # 1. Processamento por RM (Individual)
     for rm, grupo_rm in df_pwa.groupby('PEDIDO_LIMPO'):
@@ -167,34 +169,35 @@ else:
         capa_rm = str(grupo_rm['CAPA'].iloc[0])
         status_pwa = str(grupo_rm['STATUS'].iloc[0]).upper()
         
-        # Lógica de validação
+        # Verifica se essa RM específica já tem MAPA
+        tem_mapa_rm = grupo_rm['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna().any()
+        mapa_val = ", ".join(set(grupo_rm['MAPA'].dropna().astype(str).str.strip())) if tem_mapa_rm else ""
+        
+        # Lógica de validação da RM
         if status_pwa == 'CANCELADO':
             categoria = "CANCELADA"
             pendencia = "Item cancelado no sistema"
+        elif tem_mapa_rm:
+            categoria = "COM MAPA"
+            pendencia = f"MAPA gerado: {mapa_val}"
         else:
-            lotes_rm = set(grupo_rm['LOTE'].apply(normalizar_lote))
-            lotes_rm.discard('')
-            
+            lotes_rm = set(grupo_rm['LOTE'].apply(normalizar_lote)) - {''}
             lotes_faltantes = lotes_rm - lotes_disponiveis
             no_singra = rm in pedidos_singra
             
             if not lotes_faltantes and no_singra:
                 categoria = "PRONTA"
-                pendencia = "Nenhuma"
+                pendencia = "Apta para gerar MAPA (Em Expedição)"
             else:
                 categoria = "PENDENTE"
                 erros = []
-                if lotes_faltantes: erros.append(f"Lotes faltando: {', '.join(sorted(lotes_faltantes))}")
-                if not no_singra: erros.append("Não consta no SINGRA")
+                if lotes_faltantes: erros.append(f"Lotes não bipados na exp.: {', '.join(sorted(lotes_faltantes))}")
+                if not no_singra: erros.append("Não consta 'Em Expedição' no SINGRA")
                 pendencia = " | ".join(erros)
         
         lista_rm_final.append({
-            "RM": rm,
-            "CAPA": capa_rm,
-            "CAM": cam_rm,
-            "STATUS PWA": status_pwa,
-            "SITUAÇÃO": categoria,
-            "DETALHE": pendencia
+            "RM": rm, "CAPA": capa_rm, "CAM": cam_rm, 
+            "STATUS PWA": status_pwa, "SITUAÇÃO": categoria, "DETALHE": pendencia
         })
 
     df_rm_visao = pd.DataFrame(lista_rm_final)
@@ -204,59 +207,92 @@ else:
         if capa == '': continue
         cam_capa = str(grupo_capa['CAM'].iloc[0])
         
-        # Filtros de lógica da capa
-        tem_mapa = grupo_capa['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna().any()
-        if tem_mapa: continue 
-
         mascara_cancelado = grupo_capa['STATUS'].astype(str).str.upper() == 'CANCELADO'
+        tem_cancelado = mascara_cancelado.any()
         grupo_ativo = grupo_capa[~mascara_cancelado]
         
-        if grupo_ativo.empty: continue
-
-        lotes_ativos = set(grupo_ativo['LOTE'].apply(normalizar_lote))
-        lotes_ativos.discard('')
-        pedidos_ativos = set(grupo_ativo['PEDIDO_LIMPO'].apply(normalizar_codigo_rm))
-        pedidos_ativos.discard('')
-
-        faltantes_lote = lotes_ativos - lotes_disponiveis
-        faltantes_singra = pedidos_ativos - pedidos_singra
-
-        if not faltantes_lote and not faltantes_singra:
-            if mascara_cancelado.any():
-                capas_parciais.append({"CAPA": capa, "CAM": cam_capa, "RMs Ativas": ", ".join(sorted(pedidos_ativos))})
-            else:
-                capas_prontas.append({"CAPA": capa, "CAM": cam_capa, "RMs": ", ".join(sorted(pedidos_ativos))})
+        if grupo_ativo.empty: continue # Capa inteira foi cancelada
+        
+        # Analisa o status de MAPA dentro das RMs ativas (não canceladas)
+        mascara_com_mapa = grupo_ativo['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna()
+        qtd_com_mapa = mascara_com_mapa.sum()
+        total_ativos = len(grupo_ativo)
+        
+        pedidos_ativos = set(grupo_ativo['PEDIDO_LIMPO'].apply(normalizar_codigo_rm)) - {''}
+        mapas_gerados = set(grupo_ativo['MAPA'].dropna().astype(str).str.strip()) - {''}
+        
+        if qtd_com_mapa == total_ativos:
+            # CENÁRIO 1: 100% das RMs da CAPA já geraram MAPA. Processo finalizado.
+            capas_finalizadas.append({
+                "CAPA": capa, "CAM": cam_capa, 
+                "RMs": ", ".join(sorted(pedidos_ativos)), 
+                "MAPAs": ", ".join(sorted(mapas_gerados))
+            })
+        elif 0 < qtd_com_mapa < total_ativos:
+            # CENÁRIO 2: MAPA QUEBRADO. Algumas RMs geraram MAPA, outras ficaram para trás.
+            rms_com = set(grupo_ativo[mascara_com_mapa]['PEDIDO_LIMPO'].apply(normalizar_codigo_rm)) - {''}
+            rms_sem = pedidos_ativos - rms_com
+            capas_incompletas.append({
+                "CAPA": capa, "CAM": cam_capa, 
+                "MAPAs Gerados": ", ".join(sorted(mapas_gerados)),
+                "RMs COM Mapa": ", ".join(sorted(rms_com)),
+                "RMs SEM Mapa": ", ".join(sorted(rms_sem))
+            })
         else:
-            razão = []
-            if faltantes_lote: razão.append(f"Lotes: {', '.join(sorted(faltantes_lote))}")
-            if faltantes_singra: razão.append(f"RMs fora Singra: {', '.join(sorted(faltantes_singra))}")
-            capas_pendentes.append({"CAPA": capa, "CAM": cam_capa, "Pendência": " | ".join(razão)})
+            # CENÁRIO 3: Nenhuma RM tem MAPA. Avaliar se a CAPA pode ser liberada!
+            lotes_ativos = set(grupo_ativo['LOTE'].apply(normalizar_lote)) - {''}
+            faltantes_lote = lotes_ativos - lotes_disponiveis
+            faltantes_singra = pedidos_ativos - pedidos_singra
+
+            if not faltantes_lote and not faltantes_singra:
+                if tem_cancelado:
+                    capas_parciais.append({"CAPA": capa, "CAM": cam_capa, "RMs Ativas": ", ".join(sorted(pedidos_ativos))})
+                else:
+                    capas_prontas.append({"CAPA": capa, "CAM": cam_capa, "RMs (100% Prontas)": ", ".join(sorted(pedidos_ativos))})
+            else:
+                razão = []
+                if faltantes_lote: razão.append(f"Lotes físicos: {', '.join(sorted(faltantes_lote))}")
+                if faltantes_singra: razão.append(f"RMs fora Singra: {', '.join(sorted(faltantes_singra))}")
+                capas_pendentes.append({
+                    "CAPA": capa, "CAM": cam_capa, 
+                    "RMs da CAPA": ", ".join(sorted(pedidos_ativos)), 
+                    "O que falta?": " | ".join(razão)
+                })
 
     # --- INTERFACE ---
     aba_capa, aba_rm = st.tabs(["📋 Visão por CAPA", "📄 Visão por RM (Individual)"])
 
     with aba_capa:
-        t1, t2, t3 = st.tabs(["✅ Prontas", "⚠️ Pendentes", "🔶 C/ Cancelamento"])
-        with t1: st.dataframe(pd.DataFrame(capas_prontas), use_container_width=True)
-        with t2: st.dataframe(pd.DataFrame(capas_pendentes), use_container_width=True)
-        with t3: st.dataframe(pd.DataFrame(capas_parciais), use_container_width=True)
+        t1, t2, t3, t4, t5 = st.tabs(["✅ Prontas p/ MAPA", "⚠️ Pendentes", "🧩 MAPA Quebrado", "🏁 Finalizadas (C/ MAPA)", "🔶 Prontas (C/ Cancela)"])
+        
+        with t1: 
+            st.info("CAPAs aptas: 100% dos lotes na área de expedição, no SINGRA, e **nenhum** MAPA gerado.")
+            st.dataframe(pd.DataFrame(capas_prontas), use_container_width=True)
+        with t2: 
+            st.warning("CAPAs aguardando chegada de lotes físicos ou integração sistêmica.")
+            st.dataframe(pd.DataFrame(capas_pendentes), use_container_width=True)
+        with t3: 
+            st.error("Alerta Operacional: CAPAs particionadas. Algumas RMs já geraram MAPA, mas o grupo original não foi fechado.")
+            st.dataframe(pd.DataFrame(capas_incompletas), use_container_width=True)
+        with t4: 
+            st.success("CAPAs onde todas as RMs ativas já completaram o processo e possuem MAPA.")
+            st.dataframe(pd.DataFrame(capas_finalizadas), use_container_width=True)
+        with t5: 
+            st.dataframe(pd.DataFrame(capas_parciais), use_container_width=True)
 
     with aba_rm:
-        st.subheader("Filtros de RM")
+        st.subheader("Rastreio Individual de RMs")
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             cam_list = ["TODOS"] + sorted(df_rm_visao['CAM'].unique().tolist())
             filtro_cam = st.selectbox("Filtrar por CAM", cam_list)
         with col_f2:
-            sit_list = ["TODAS", "PRONTA", "PENDENTE", "CANCELADA"]
+            sit_list = ["TODAS", "PRONTA", "PENDENTE", "COM MAPA", "CANCELADA"]
             filtro_sit = st.selectbox("Filtrar por Situação", sit_list)
 
-        # Aplicação dos filtros
         df_filtrado = df_rm_visao.copy()
-        if filtro_cam != "TODOS":
-            df_filtrado = df_filtrado[df_filtrado['CAM'] == filtro_cam]
-        if filtro_sit != "TODAS":
-            df_filtrado = df_filtrado[df_filtrado['SITUAÇÃO'] == filtro_sit]
+        if filtro_cam != "TODOS": df_filtrado = df_filtrado[df_filtrado['CAM'] == filtro_cam]
+        if filtro_sit != "TODAS": df_filtrado = df_filtrado[df_filtrado['SITUAÇÃO'] == filtro_sit]
 
         st.write(f"Exibindo {len(df_filtrado)} RMs")
         st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
