@@ -156,10 +156,10 @@ else:
     # --- PROCESSAMENTO DOS DADOS ---
     lista_rm_final = []
     capas_prontas = []
-    capas_parciais = []     # Prontas, mas derivadas de um pedido com cancelamento
-    capas_pendentes = []    # Faltam lotes físicos na expedição ou status no Singra
-    capas_incompletas = []  # MAPA quebrado (algumas RMs têm MAPA, outras não)
-    capas_finalizadas = []  # 100% das RMs ativas já possuem MAPA
+    capas_parciais = []     
+    capas_pendentes = []    
+    capas_incompletas = []  
+    capas_finalizadas = []  
 
     # 1. Processamento por RM (Individual)
     for rm, grupo_rm in df_pwa.groupby('PEDIDO_LIMPO'):
@@ -169,11 +169,9 @@ else:
         capa_rm = str(grupo_rm['CAPA'].iloc[0])
         status_pwa = str(grupo_rm['STATUS'].iloc[0]).upper()
         
-        # Verifica se essa RM específica já tem MAPA
         tem_mapa_rm = grupo_rm['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna().any()
         mapa_val = ", ".join(set(grupo_rm['MAPA'].dropna().astype(str).str.strip())) if tem_mapa_rm else ""
         
-        # Lógica de validação da RM
         if status_pwa == 'CANCELADO':
             categoria = "CANCELADA"
             pendencia = "Item cancelado no sistema"
@@ -211,9 +209,8 @@ else:
         tem_cancelado = mascara_cancelado.any()
         grupo_ativo = grupo_capa[~mascara_cancelado]
         
-        if grupo_ativo.empty: continue # Capa inteira foi cancelada
+        if grupo_ativo.empty: continue 
         
-        # Analisa o status de MAPA dentro das RMs ativas (não canceladas)
         mascara_com_mapa = grupo_ativo['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna()
         qtd_com_mapa = mascara_com_mapa.sum()
         total_ativos = len(grupo_ativo)
@@ -222,14 +219,12 @@ else:
         mapas_gerados = set(grupo_ativo['MAPA'].dropna().astype(str).str.strip()) - {''}
         
         if qtd_com_mapa == total_ativos:
-            # CENÁRIO 1: 100% das RMs da CAPA já geraram MAPA. Processo finalizado.
             capas_finalizadas.append({
                 "CAPA": capa, "CAM": cam_capa, 
                 "RMs": ", ".join(sorted(pedidos_ativos)), 
                 "MAPAs": ", ".join(sorted(mapas_gerados))
             })
         elif 0 < qtd_com_mapa < total_ativos:
-            # CENÁRIO 2: MAPA QUEBRADO. Algumas RMs geraram MAPA, outras ficaram para trás.
             rms_com = set(grupo_ativo[mascara_com_mapa]['PEDIDO_LIMPO'].apply(normalizar_codigo_rm)) - {''}
             rms_sem = pedidos_ativos - rms_com
             capas_incompletas.append({
@@ -239,7 +234,6 @@ else:
                 "RMs SEM Mapa": ", ".join(sorted(rms_sem))
             })
         else:
-            # CENÁRIO 3: Nenhuma RM tem MAPA. Avaliar se a CAPA pode ser liberada!
             lotes_ativos = set(grupo_ativo['LOTE'].apply(normalizar_lote)) - {''}
             faltantes_lote = lotes_ativos - lotes_disponiveis
             faltantes_singra = pedidos_ativos - pedidos_singra
@@ -251,12 +245,41 @@ else:
                     capas_prontas.append({"CAPA": capa, "CAM": cam_capa, "RMs (100% Prontas)": ", ".join(sorted(pedidos_ativos))})
             else:
                 razão = []
-                if faltantes_lote: razão.append(f"Lotes físicos: {', '.join(sorted(faltantes_lote))}")
-                if faltantes_singra: razão.append(f"RMs fora Singra: {', '.join(sorted(faltantes_singra))}")
+                
+                # 1. Adiciona os lotes faltantes
+                if faltantes_lote: 
+                    razão.append(f"Lotes que não estão na Expedição: {', '.join(sorted(faltantes_lote))}")
+                
+                # 2. Adiciona as RMs fora do Singra, agrupadas por Status do WMS
+                if faltantes_singra: 
+                    status_dict = {}
+                    for rm_faltante in faltantes_singra:
+                        # Pega o status dessa RM específica no grupo
+                        rm_rows = grupo_ativo[grupo_ativo['PEDIDO_LIMPO'] == rm_faltante]
+                        if not rm_rows.empty:
+                            status_wms = str(rm_rows['STATUS'].iloc[0]).strip().upper()
+                            if not status_wms: status_wms = "SEM STATUS"
+                        else:
+                            status_wms = "DESCONHECIDO"
+                            
+                        if status_wms not in status_dict:
+                            status_dict[status_wms] = []
+                        status_dict[status_wms].append(rm_faltante)
+                    
+                    # Monta o texto estruturado
+                    texto_singra = "RMs fora Singra:\n"
+                    linhas_status = []
+                    for st_nome, rms in sorted(status_dict.items()):
+                        linhas_status.append(f"- STATUS WMS - {st_nome}: {', '.join(sorted(rms))}")
+                    texto_singra += "\n".join(linhas_status)
+                    
+                    razão.append(texto_singra)
+                
+                # Junta tudo com duas quebras de linha para ficar bem espaçado
                 capas_pendentes.append({
                     "CAPA": capa, "CAM": cam_capa, 
                     "RMs da CAPA": ", ".join(sorted(pedidos_ativos)), 
-                    "O que falta?": " | ".join(razão)
+                    "O que falta?": "\n\n".join(razão)
                 })
 
     # --- INTERFACE ---
@@ -268,15 +291,24 @@ else:
         with t1: 
             st.info("CAPAs aptas: 100% dos lotes na área de expedição, no SINGRA, e **nenhum** MAPA gerado.")
             st.dataframe(pd.DataFrame(capas_prontas), use_container_width=True)
+            
         with t2: 
             st.warning("CAPAs aguardando chegada de lotes físicos ou integração sistêmica.")
-            st.dataframe(pd.DataFrame(capas_pendentes), use_container_width=True)
+            df_pendentes_exibir = pd.DataFrame(capas_pendentes)
+            if not df_pendentes_exibir.empty:
+                # O pre-wrap força o Streamlit a respeitar as quebras de linha (\n) na exibição
+                st.dataframe(df_pendentes_exibir.style.set_properties(**{'white-space': 'pre-wrap'}), use_container_width=True)
+            else:
+                st.info("Nenhuma CAPA pendente.")
+                
         with t3: 
             st.error("Alerta Operacional: CAPAs particionadas. Algumas RMs já geraram MAPA, mas o grupo original não foi fechado.")
             st.dataframe(pd.DataFrame(capas_incompletas), use_container_width=True)
+            
         with t4: 
             st.success("CAPAs onde todas as RMs ativas já completaram o processo e possuem MAPA.")
             st.dataframe(pd.DataFrame(capas_finalizadas), use_container_width=True)
+            
         with t5: 
             st.dataframe(pd.DataFrame(capas_parciais), use_container_width=True)
 
@@ -296,7 +328,6 @@ else:
 
         st.write(f"Exibindo {len(df_filtrado)} RMs")
         st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
-
 st.divider()
 
 # ----------------------
