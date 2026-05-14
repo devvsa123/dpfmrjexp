@@ -147,7 +147,7 @@ st.divider()
 # ----------------------
 # BLOCO 1 – A NOVA LÓGICA CORRIGIDA
 # ----------------------
-st.markdown("## 🔵 BLOCO 1 — Status das CAPAs")
+st.markdown("## 🔷 BLOCO 1 — Status das CAPAs")
 
 required_pwa_cols = ['PEDIDO_LIMPO', 'LOTE', 'CAPA', 'CAM', 'STATUS']
 if not all(c in df_pwa.columns for c in required_pwa_cols):
@@ -310,7 +310,7 @@ st.divider()
 # ----------------------
 # BLOCO 3: STC não expedidas (agrupar por CAM e STC)
 # ----------------------
-st.markdown("## 🔶 BLOCO 3 — STC não expedidas (agrupar por CAM e STC)")
+st.markdown("## 🔷 BLOCO 3 — STC não expedidas (agrupar por CAM e STC)")
 
 if all(c in df_pwa.columns for c in ['STC','STATUS','CAM','MAPA']):
     df_stc_nao_expedida = df_pwa[
