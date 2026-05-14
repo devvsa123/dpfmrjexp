@@ -145,137 +145,121 @@ c3.metric("Lotes conferidos (Google)", len(lotes_disponiveis))
 st.divider()
 
 # ----------------------
-# BLOCO 1 – A NOVA LÓGICA CORRIGIDA
+# BLOCO 1 – VISÃO POR CAPA E VISÃO POR RM
 # ----------------------
-st.markdown("## 🔷 BLOCO 1 — Status das CAPAs")
+st.markdown("## 🔵 BLOCO 1 — Status de Processamento")
 
 required_pwa_cols = ['PEDIDO_LIMPO', 'LOTE', 'CAPA', 'CAM', 'STATUS']
 if not all(c in df_pwa.columns for c in required_pwa_cols):
     st.error(f"Colunas essenciais faltando no PWA. Necessário: {required_pwa_cols}")
 else:
+    # --- PROCESSAMENTO DOS DADOS ---
+    lista_rm_final = []
     capas_prontas = []
     capas_parciais = []
     capas_pendentes = []
-    capas_com_mapa = []
 
-    # Agrupar PWA por CAPA
-    for capa, grupo in df_pwa.groupby('CAPA'):
-        if pd.isna(capa) or str(capa).strip() == '':
-            continue
-            
-        cam = str(grupo['CAM'].iloc[0]) if 'CAM' in grupo.columns else ''
-
-        # 1. Checagem de MAPA
-        # Se qualquer item na CAPA tiver um MAPA preenchido, ela já está prontificada/em outro fluxo
-        tem_mapa = grupo['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna().any()
-        if tem_mapa:
-            rms_mapa = set(grupo['PEDIDO_LIMPO'].dropna().tolist())
-            capas_com_mapa.append({"CAPA": capa, "CAM": cam, "RMs": ", ".join(sorted(rms_mapa))})
-            continue
-
-        # 2. Separar Itens Ativos de Cancelados
-        mascara_cancelado = grupo['STATUS'].astype(str).str.upper() == 'CANCELADO'
-        tem_cancelado = mascara_cancelado.any()
-        grupo_ativo = grupo[~mascara_cancelado]
-
-        if grupo_ativo.empty:
-            continue # CAPA inteira cancelada, ignoramos.
-
-        # 3. Extrair Lotes e Pedidos ativos da CAPA
-        lotes_ativos = set(grupo_ativo['LOTE'].apply(normalizar_lote))
-        lotes_ativos.discard('') # Remove vazios
+    # 1. Processamento por RM (Individual)
+    for rm, grupo_rm in df_pwa.groupby('PEDIDO_LIMPO'):
+        if rm == '': continue
         
+        cam_rm = str(grupo_rm['CAM'].iloc[0])
+        capa_rm = str(grupo_rm['CAPA'].iloc[0])
+        status_pwa = str(grupo_rm['STATUS'].iloc[0]).upper()
+        
+        # Lógica de validação
+        if status_pwa == 'CANCELADO':
+            categoria = "CANCELADA"
+            pendencia = "Item cancelado no sistema"
+        else:
+            lotes_rm = set(grupo_rm['LOTE'].apply(normalizar_lote))
+            lotes_rm.discard('')
+            
+            lotes_faltantes = lotes_rm - lotes_disponiveis
+            no_singra = rm in pedidos_singra
+            
+            if not lotes_faltantes and no_singra:
+                categoria = "PRONTA"
+                pendencia = "Nenhuma"
+            else:
+                categoria = "PENDENTE"
+                erros = []
+                if lotes_faltantes: erros.append(f"Lotes faltando: {', '.join(sorted(lotes_faltantes))}")
+                if not no_singra: erros.append("Não consta no SINGRA")
+                pendencia = " | ".join(erros)
+        
+        lista_rm_final.append({
+            "RM": rm,
+            "CAPA": capa_rm,
+            "CAM": cam_rm,
+            "STATUS PWA": status_pwa,
+            "SITUAÇÃO": categoria,
+            "DETALHE": pendencia
+        })
+
+    df_rm_visao = pd.DataFrame(lista_rm_final)
+
+    # 2. Processamento por CAPA (Agrupado)
+    for capa, grupo_capa in df_pwa.groupby('CAPA'):
+        if capa == '': continue
+        cam_capa = str(grupo_capa['CAM'].iloc[0])
+        
+        # Filtros de lógica da capa
+        tem_mapa = grupo_capa['MAPA'].replace(r'^\s*$', np.nan, regex=True).notna().any()
+        if tem_mapa: continue 
+
+        mascara_cancelado = grupo_capa['STATUS'].astype(str).str.upper() == 'CANCELADO'
+        grupo_ativo = grupo_capa[~mascara_cancelado]
+        
+        if grupo_ativo.empty: continue
+
+        lotes_ativos = set(grupo_ativo['LOTE'].apply(normalizar_lote))
+        lotes_ativos.discard('')
         pedidos_ativos = set(grupo_ativo['PEDIDO_LIMPO'].apply(normalizar_codigo_rm))
         pedidos_ativos.discard('')
 
-        # 4. A mágica da diferença de conjuntos para achar exatamente o erro
-        lotes_faltantes = lotes_ativos - lotes_disponiveis
-        pedidos_faltantes_singra = pedidos_ativos - pedidos_singra
+        faltantes_lote = lotes_ativos - lotes_disponiveis
+        faltantes_singra = pedidos_ativos - pedidos_singra
 
-        # 5. Classificação
-        if not lotes_faltantes and not pedidos_faltantes_singra:
-            # Tudo perfeito! Nenhum lote ou pedido faltando.
-            if tem_cancelado:
-                capas_parciais.append({
-                    "CAPA": capa, 
-                    "CAM": cam, 
-                    "RMs Ativas (Prontas)": ", ".join(sorted(pedidos_ativos)),
-                    "Aviso": "Contém RMs Canceladas"
-                })
+        if not faltantes_lote and not faltantes_singra:
+            if mascara_cancelado.any():
+                capas_parciais.append({"CAPA": capa, "CAM": cam_capa, "RMs Ativas": ", ".join(sorted(pedidos_ativos))})
             else:
-                capas_prontas.append({
-                    "CAPA": capa, 
-                    "CAM": cam, 
-                    "RMs (100% Prontas)": ", ".join(sorted(pedidos_ativos))
-                })
+                capas_prontas.append({"CAPA": capa, "CAM": cam_capa, "RMs": ", ".join(sorted(pedidos_ativos))})
         else:
-            # Tem pendência! Vamos registrar exatamente o que é.
-            pendencias_desc = []
-            if lotes_faltantes:
-                pendencias_desc.append(f"Lotes ausentes na conf.: {', '.join(sorted(lotes_faltantes))}")
-            if pedidos_faltantes_singra:
-                pendencias_desc.append(f"RMs fora do SINGRA: {', '.join(sorted(pedidos_faltantes_singra))}")
-                
-            capas_pendentes.append({
-                "CAPA": capa,
-                "CAM": cam,
-                "RMs da CAPA": ", ".join(sorted(pedidos_ativos)),
-                "O que falta resolver?": " | ".join(pendencias_desc)
-            })
+            razão = []
+            if faltantes_lote: razão.append(f"Lotes: {', '.join(sorted(faltantes_lote))}")
+            if faltantes_singra: razão.append(f"RMs fora Singra: {', '.join(sorted(faltantes_singra))}")
+            capas_pendentes.append({"CAPA": capa, "CAM": cam_capa, "Pendência": " | ".join(razão)})
 
-    # Criar DataFrames
-    df_prontas = pd.DataFrame(capas_prontas)
-    df_parciais = pd.DataFrame(capas_parciais)
-    df_pendentes = pd.DataFrame(capas_pendentes)
-    df_com_mapa = pd.DataFrame(capas_com_mapa)
+    # --- INTERFACE ---
+    aba_capa, aba_rm = st.tabs(["📋 Visão por CAPA", "📄 Visão por RM (Individual)"])
 
-    # Exibição
-    t1, t2, t3 = st.tabs(["✅ 100% Prontas", "⚠️ Pendentes / Incompletas", "🔶 Parciais (C/ Cancelamento)"])
-    
-    with t1:
-        st.success(f"**{len(df_prontas)} CAPAs totalmente prontas** para expedir (sem pendências, sem cancelamentos).")
-        if not df_prontas.empty:
-            st.dataframe(df_prontas, use_container_width=True)
-            
-    with t2:
-        st.error(f"**{len(df_pendentes)} CAPAs com problemas.** Veja a coluna 'O que falta resolver?' para corrigir.")
-        if not df_pendentes.empty:
-            st.dataframe(df_pendentes, use_container_width=True)
-            
-    with t3:
-        st.warning(f"**{len(df_parciais)} CAPAs parcialmente prontas.** Os itens ativos estão ok, mas a CAPA possui itens cancelados.")
-        if not df_parciais.empty:
-            st.dataframe(df_parciais, use_container_width=True)
+    with aba_capa:
+        t1, t2, t3 = st.tabs(["✅ Prontas", "⚠️ Pendentes", "🔶 C/ Cancelamento"])
+        with t1: st.dataframe(pd.DataFrame(capas_prontas), use_container_width=True)
+        with t2: st.dataframe(pd.DataFrame(capas_pendentes), use_container_width=True)
+        with t3: st.dataframe(pd.DataFrame(capas_parciais), use_container_width=True)
 
-# ----------------------
-# Exportação Excel Atualizada
-# ----------------------
-def to_excel(dfs, names):
-    out = BytesIO()
-    with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
-        for df, name in zip(dfs, names):
-            if not df.empty:
-                df.to_excel(writer, sheet_name=name, index=False)
-    return out.getvalue()
+    with aba_rm:
+        st.subheader("Filtros de RM")
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            cam_list = ["TODOS"] + sorted(df_rm_visao['CAM'].unique().tolist())
+            filtro_cam = st.selectbox("Filtrar por CAM", cam_list)
+        with col_f2:
+            sit_list = ["TODAS", "PRONTA", "PENDENTE", "CANCELADA"]
+            filtro_sit = st.selectbox("Filtrar por Situação", sit_list)
 
+        # Aplicação dos filtros
+        df_filtrado = df_rm_visao.copy()
+        if filtro_cam != "TODOS":
+            df_filtrado = df_filtrado[df_filtrado['CAM'] == filtro_cam]
+        if filtro_sit != "TODAS":
+            df_filtrado = df_filtrado[df_filtrado['SITUAÇÃO'] == filtro_sit]
 
-st.markdown("### 📥 Exportar Resultados")
-if st.button("Gerar Excel de Saída"):
-    export_dfs = [
-        df_prontas if 'df_prontas' in locals() else pd.DataFrame(),
-        df_pendentes if 'df_pendentes' in locals() else pd.DataFrame(),
-        df_parciais if 'df_parciais' in locals() else pd.DataFrame(),
-        df_com_mapa if 'df_com_mapa' in locals() else pd.DataFrame()
-    ]
-    names = ["CAPAS_100_Prontas", "CAPAS_Pendentes", "CAPAS_Parciais", "CAPAS_Ja_Com_Mapa"]
-    
-    excel_bytes = to_excel(export_dfs, names)
-    st.download_button(
-        label="📥 Baixar Relatório de CAPAs",
-        data=excel_bytes,
-        file_name="relatorio_expedicao_capas.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        st.write(f"Exibindo {len(df_filtrado)} RMs")
+        st.dataframe(df_filtrado, use_container_width=True, hide_index=True)
 
 st.divider()
 
