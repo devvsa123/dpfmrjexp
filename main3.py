@@ -41,8 +41,12 @@ def normalizar_lote(valor):
 @st.cache_data
 def carregar_singra(file):
     try:
+        # 1ª Tentativa: Lê com utf-8-sig
         df = pd.read_csv(file, sep=';', encoding='utf-8-sig', dtype=str, low_memory=False)
-    except:
+    except Exception:
+        # REBOBINA o arquivo para a posição 0 antes de tentar de novo
+        file.seek(0)
+        # 2ª Tentativa: Lê com latin1
         df = pd.read_csv(file, sep=';', encoding='latin1', dtype=str, low_memory=False)
     
     df = clean_colnames(df)
