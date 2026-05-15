@@ -365,6 +365,35 @@ else:
 st.divider()
 
 # ----------------------
+# BLOCO 2: MAPA sem STC (agrupar por CAM e MAPA) — excluir STATUS EXPEDIDO
+# ----------------------
+st.markdown("## 🔷 BLOCO 2 — MAPA sem STC (agrupar por CAM e MAPA)")
+
+if all(c in df_pwa.columns for c in ['MAPA','STC','STATUS','CAM','CAPA']):
+    df_mapa_sem_stc = df_pwa[
+        (df_pwa['MAPA'] != '') &
+        (df_pwa['STC'] == '') &
+        (df_pwa['STATUS'] != 'EXPEDIDO')
+    ]
+    if df_mapa_sem_stc.empty:
+        st.info("Nenhuma MAPA sem STC (após filtrar EXPEDIDO).")
+    else:
+        agrupado_mapa = (
+            df_mapa_sem_stc.groupby(['CAM','MAPA'])
+            .agg({'CAPA': lambda x: ', '.join(sorted(set(x)))})
+            .reset_index()
+        )
+        cams = ["Todos"] + sorted(agrupado_mapa['CAM'].unique().tolist())
+        cam_sel = st.selectbox("Filtrar por CAM (Bloco 2)", cams)
+        display = agrupado_mapa if cam_sel == "Todos" else agrupado_mapa[agrupado_mapa['CAM'] == cam_sel]
+        st.dataframe(display.style.set_properties(**{'text-align':'left'}), use_container_width=True)
+else:
+    st.info("Colunas necessárias para Bloco 2 ausentes no PWA.")
+
+
+st.divider()
+
+# ----------------------
 # BLOCO 3: STC não expedidas (agrupar por CAM e STC)
 # ----------------------
 st.markdown("## 🔷 BLOCO 3 — STC não expedidas (agrupar por CAM e STC)")
