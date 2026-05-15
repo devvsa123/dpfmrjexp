@@ -145,7 +145,7 @@ c3.metric("Lotes conferidos (Google)", len(lotes_disponiveis))
 st.divider()
 
 # ----------------------
-# BLOCO 1 – VISÃO POR CAPA E VISÃO POR RM (REGRAS DE MAPA E EXPEDIÇÃO)
+# BLOCO 1 – VISÃO POR CAPA E VISÃO POR RM (COM MÉTRICAS DE RESUMO)
 # ----------------------
 st.markdown("## 🔵 BLOCO 1 — Status de Processamento e Expedição")
 
@@ -158,8 +158,8 @@ else:
     capas_prontas = []
     capas_parciais = []     
     capas_pendentes = []    
-    capas_quebradas_prontas = []   # NOVO: MAPA parcial, mas o restante está 100% apto
-    capas_quebradas_pendentes = [] # NOVO: MAPA parcial e o restante ainda deve lote/singra
+    capas_quebradas_prontas = []   
+    capas_quebradas_pendentes = [] 
     capas_finalizadas = []  
 
     # 1. Processamento por RM (Individual)
@@ -201,6 +201,19 @@ else:
 
     df_rm_visao = pd.DataFrame(lista_rm_final)
 
+    # --- CÁLCULO DAS MÉTRICAS DE RESUMO ---
+    # Contamos apenas as RMs que não estão canceladas nem já possuem mapa
+    total_prontas = len(df_rm_visao[df_rm_visao['SITUAÇÃO'] == "PRONTA"])
+    total_pendentes = len(df_rm_visao[df_rm_visao['SITUAÇÃO'] == "PENDENTE"])
+    total_com_mapa = len(df_rm_visao[df_rm_visao['SITUAÇÃO'] == "COM MAPA"])
+
+    # Exibição das métricas em destaque
+    m1, m2, m3 = st.columns(3)
+    m1.metric("✅ RMs Prontas p/ MAPA", total_prontas)
+    m2.metric("⚠️ RMs Pendentes", total_pendentes)
+    m3.metric("🏁 RMs com MAPA (Finalizadas)", total_com_mapa)
+    st.divider()
+
     # 2. Processamento por CAPA (Agrupado)
     for capa, grupo_capa in df_pwa.groupby('CAPA'):
         if capa == '': continue
@@ -220,58 +233,47 @@ else:
         mapas_existentes = set(grupo_ativo['MAPA'].dropna().astype(str).str.strip()) - {''}
         
         if qtd_com_mapa == total_ativos:
-            # TUDO JÁ TEM MAPA
             capas_finalizadas.append({
                 "CAPA": capa, "CAM": cam_capa, 
                 "RMs": ", ".join(sorted(pedidos_ativos)), 
                 "MAPAs": ", ".join(sorted(mapas_existentes))
             })
         elif 0 < qtd_com_mapa < total_ativos:
-            # MAPA QUEBRADO - VAMOS ANALISAR O RESTANTE
             rms_com = set(grupo_ativo[mascara_com_mapa]['PEDIDO_LIMPO'].apply(normalizar_codigo_rm)) - {''}
             rms_sem = pedidos_ativos - rms_com
-            
-            # Detalhes do que já existe
             detalhe_geral = f"MAPAs existentes: {', '.join(sorted(mapas_existentes))}\n"
             detalhe_geral += f"RMs já com MAPA: {', '.join(sorted(rms_com))}\n"
             
-            # Analisar RMs que sobraram
             grupo_restante = grupo_ativo[grupo_ativo['PEDIDO_LIMPO'].isin(rms_sem)]
             lotes_restantes = set(grupo_restante['LOTE'].apply(normalizar_lote)) - {''}
-            
             faltantes_lote_rest = lotes_restantes - lotes_disponiveis
             faltantes_singra_rest = rms_sem - pedidos_singra
             
             if not faltantes_lote_rest and not faltantes_singra_rest:
-                # O restante está 100% pronto
                 capas_quebradas_prontas.append({
                     "CAPA": capa, "CAM": cam_capa,
+                    "Qtd RM": len(rms_sem),
                     "RMs Pendentes (Prontas)": ", ".join(sorted(rms_sem)),
                     "Histórico": detalhe_geral
                 })
             else:
-                # O restante ainda tem problemas (igual lógica da pendente)
                 razão_quebra = [detalhe_geral]
-                if faltantes_lote_rest:
-                    razão_quebra.append(f"Lotes Restantes ausentes: {', '.join(sorted(faltantes_lote_rest))}")
+                if faltantes_lote_rest: razão_quebra.append(f"Lotes Restantes ausentes: {', '.join(sorted(faltantes_lote_rest))}")
                 if faltantes_singra_rest:
-                    # Agrupar RMs restantes por status WMS para facilitar
                     status_dict_rest = {}
                     for r in faltantes_singra_rest:
                         st_wms = str(grupo_restante[grupo_restante['PEDIDO_LIMPO'] == r]['STATUS'].iloc[0]).upper()
                         status_dict_rest.setdefault(st_wms, []).append(r)
-                    
-                    msg_singra = "RMs Restantes fora Singra:\n"
-                    msg_singra += "\n".join([f"- {s}: {', '.join(sorted(rs))}" for s, rs in status_dict_rest.items()])
-                    razão_quebra.append(msg_singra)
+                    msg_s = "RMs Restantes fora Singra:\n" + "\n".join([f"- {s}: {', '.join(sorted(rs))}" for s, rs in status_dict_rest.items()])
+                    razão_quebra.append(msg_s)
 
                 capas_quebradas_pendentes.append({
                     "CAPA": capa, "CAM": cam_capa,
+                    "Qtd RM": len(rms_sem),
                     "RMs s/ MAPA": ", ".join(sorted(rms_sem)),
                     "Pendência do Restante": "\n\n".join(razão_quebra)
                 })
         else:
-            # NENHUMA TEM MAPA (Lógica Normal)
             lotes_ativos = set(grupo_ativo['LOTE'].apply(normalizar_lote)) - {''}
             faltantes_lote = lotes_ativos - lotes_disponiveis
             faltantes_singra = pedidos_ativos - pedidos_singra
@@ -280,22 +282,21 @@ else:
                 if tem_cancelado:
                     capas_parciais.append({"CAPA": capa, "CAM": cam_capa, "RMs Ativas": ", ".join(sorted(pedidos_ativos))})
                 else:
-                    capas_prontas.append({"CAPA": capa, "CAM": cam_capa, "RMs (100% Prontas)": ", ".join(sorted(pedidos_ativos))})
+                    capas_prontas.append({"CAPA": capa, "CAM": cam_capa, "Qtd RM": len(pedidos_ativos), "RMs (100% Prontas)": ", ".join(sorted(pedidos_ativos))})
             else:
                 razão = []
-                if faltantes_lote: 
-                    razão.append(f"Lotes que não estão na Expedição: {', '.join(sorted(faltantes_lote))}")
+                if faltantes_lote: razão.append(f"Lotes que não estão na Expedição: {', '.join(sorted(faltantes_lote))}")
                 if faltantes_singra: 
                     status_dict = {}
                     for rm_f in faltantes_singra:
                         st_wms = str(grupo_ativo[grupo_ativo['PEDIDO_LIMPO'] == rm_f]['STATUS'].iloc[0]).upper()
                         status_dict.setdefault(st_wms or "SEM STATUS", []).append(rm_f)
-                    
                     texto_s = "RMs fora Singra:\n" + "\n".join([f"- {s}: {', '.join(sorted(rs))}" for s, rs in sorted(status_dict.items())])
                     razão.append(texto_s)
                 
                 capas_pendentes.append({
                     "CAPA": capa, "CAM": cam_capa, 
+                    "Qtd RM": len(pedidos_ativos),
                     "RMs da CAPA": ", ".join(sorted(pedidos_ativos)), 
                     "O que falta?": "\n\n".join(razão)
                 })
@@ -304,49 +305,31 @@ else:
     aba_capa, aba_rm = st.tabs(["📋 Visão por CAPA", "📄 Visão por RM (Individual)"])
 
     with aba_capa:
-        # Reorganizei as abas para separar o MAPA Quebrado em dois níveis de prioridade
         t1, t2, t3, t4, t5, t6 = st.tabs([
-            "✅ Prontas p/ MAPA", 
-            "🧩 Quebradas (Restante PRONTO)", 
-            "⚠️ Pendentes (Normais)", 
-            "🧩 Quebradas (Restante PENDENTE)", 
-            "🏁 Finalizadas", 
-            "🔶 C/ Cancelamento"
+            f"✅ Prontas ({len(capas_prontas)})", 
+            f"🧩 Quebradas Prontas ({len(capas_quebradas_prontas)})", 
+            f"⚠️ Pendentes ({len(capas_pendentes)})", 
+            f"🧩 Quebradas Pendentes ({len(capas_quebradas_pendentes)})", 
+            f"🏁 Finalizadas ({len(capas_finalizadas)})", 
+            f"🔶 C/ Cancelamento ({len(capas_parciais)})"
         ])
         
         with t1: 
-            st.info("CAPAs íntegras (sem nenhum MAPA) onde tudo já está liberado.")
             st.dataframe(pd.DataFrame(capas_prontas), use_container_width=True)
-            
         with t2:
-            st.success("Prioridade: CAPAs que já tiveram MAPAs parciais, mas o que sobrou agora já pode ser processado!")
-            df_qp = pd.DataFrame(capas_quebradas_prontas)
-            if not df_qp.empty:
-                st.dataframe(df_qp.style.set_properties(**{'white-space': 'pre-wrap'}), use_container_width=True)
-            else: st.info("Nenhum caso.")
-
+            st.dataframe(pd.DataFrame(capas_quebradas_prontas).style.set_properties(**{'white-space': 'pre-wrap'}), use_container_width=True)
         with t3: 
-            st.warning("CAPAs novas que ainda aguardam lotes ou sistema.")
-            df_p = pd.DataFrame(capas_pendentes)
-            if not df_p.empty:
-                st.dataframe(df_p.style.set_properties(**{'white-space': 'pre-wrap'}), use_container_width=True)
-            else: st.info("Nenhuma pendência.")
-
+            st.dataframe(pd.DataFrame(capas_pendentes).style.set_properties(**{'white-space': 'pre-wrap'}), use_container_width=True)
         with t4:
-            st.error("Atenção: O restante destas CAPAs quebradas ainda possui pendências físicas ou sistêmicas.")
-            df_qpen = pd.DataFrame(capas_quebradas_pendentes)
-            if not df_qpen.empty:
-                st.dataframe(df_qpen.style.set_properties(**{'white-space': 'pre-wrap'}), use_container_width=True)
-            else: st.info("Nenhum caso.")
-                
+            st.dataframe(pd.DataFrame(capas_quebradas_pendentes).style.set_properties(**{'white-space': 'pre-wrap'}), use_container_width=True)
         with t5: 
             st.dataframe(pd.DataFrame(capas_finalizadas), use_container_width=True)
-            
         with t6: 
             st.dataframe(pd.DataFrame(capas_parciais), use_container_width=True)
 
     with aba_rm:
         st.subheader("Rastreio Individual de RMs")
+        # Filtros e Tabela de RM permanecem iguais...
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             cam_list = ["TODOS"] + sorted(df_rm_visao['CAM'].unique().tolist())
